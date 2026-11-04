@@ -3,18 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <style>
+      /* 디자인 기준: 간격 6/12px, 라운드 6/8/14px, 글자 12/13/15px. 색은 Orca 테마 변수만 쓴다. */
+      :root {
+        --r-sm: 6px;
+        --r-md: 8px;
+        --r-lg: 14px;
+        --ring-soft: color-mix(in srgb, var(--orca-ring) 35%, transparent);
+        --hover: color-mix(in srgb, var(--orca-foreground) 7%, transparent);
+        --danger-soft: color-mix(in srgb, var(--orca-destructive) 14%, transparent);
+      }
       * {
         box-sizing: border-box;
+        scrollbar-color: var(--orca-border) transparent;
+        scrollbar-width: thin;
       }
       body {
         display: flex;
         flex-direction: column;
         min-height: 100vh;
         margin: 0;
-        padding: 12px;
-        font: 13px system-ui, sans-serif;
+        padding: 14px 12px 10px;
+        font: 13px/1.5 system-ui, 'Malgun Gothic', sans-serif;
         color: var(--orca-foreground);
         background: var(--orca-background);
+        -webkit-font-smoothing: antialiased;
       }
       #app {
         flex: 1;
@@ -27,9 +39,19 @@
         flex-wrap: wrap;
         justify-content: flex-end;
         min-height: 40px;
-        margin-top: 12px;
-        padding-top: 8px;
+        margin-top: 14px;
+        padding-top: 10px;
         border-top: 1px solid var(--orca-border);
+      }
+      #bar button {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--orca-muted-foreground);
+        background: transparent;
+      }
+      #bar button:hover:not(:disabled) {
+        color: var(--orca-foreground);
+        background: var(--hover);
       }
       #bar .ico {
         line-height: 1;
@@ -37,49 +59,20 @@
       #bar .lbl {
         margin-left: 6px;
       }
-      /* 하단바는 360px 아래에서 아이콘만 보인다. 대화상자의 버튼 줄은 좁으면 줄바꿈한다. */
-      dialog .row {
-        flex-wrap: wrap;
-      }
-      @media (max-width: 360px) {
-        #bar .lbl {
-          display: none;
-        }
-        #bar button {
-          padding: 6px 10px;
-        }
-      }
-      @media (max-width: 260px) {
-        .issue-open {
-          flex-wrap: wrap;
-          row-gap: 2px;
-        }
-        .issue-title {
-          flex-basis: 100%;
-        }
-      }
-      @media (max-width: 300px) {
-        body {
-          padding: 8px;
-        }
-        #bar .lbl {
-          display: none;
-        }
-        #bar button {
-          padding: 6px 10px;
-        }
-        dialog {
-          width: calc(100% - 16px);
-          padding: 12px;
-        }
-      }
       h2 {
         margin: 0;
-        font-size: 15px;
+        font-size: 14px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
       }
       h3 {
         margin: 0;
-        font-size: 13px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      h2,
+      h3 {
+        white-space: nowrap;
       }
       hr {
         width: 100%;
@@ -102,6 +95,9 @@
         align-items: end;
       }
       /* 좁은 패널: 제목은 한 줄로 두고, 모자라면 버튼 묶음이 아래로 내려간다. */
+      .between {
+        justify-content: space-between;
+      }
       .row.between {
         flex-wrap: wrap;
         row-gap: 6px;
@@ -109,33 +105,35 @@
       .row.between > .row {
         flex-wrap: wrap;
       }
-      h2,
-      h3 {
-        white-space: nowrap;
-      }
       .grow {
         flex: 1;
         min-width: 0;
       }
+
+      /* 입력 */
       label,
       fieldset {
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 5px;
         margin: 0;
         padding: 0;
         border: 0;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--orca-muted-foreground);
       }
       legend {
         padding: 0;
-        margin-bottom: 4px;
+        margin-bottom: 5px;
       }
       label.radio {
         flex-direction: row;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
+        font-size: 13px;
         font-weight: 400;
+        color: var(--orca-foreground);
       }
       input:not([type='radio']),
       textarea,
@@ -144,37 +142,71 @@
         padding: 7px 10px;
         font: inherit;
         font-weight: 400;
-        color: inherit;
+        color: var(--orca-foreground);
         background: var(--orca-card);
         border: 1px solid var(--orca-input);
-        border-radius: var(--orca-radius);
+        border-radius: var(--r-md);
+        transition: border-color 0.12s, box-shadow 0.12s;
+      }
+      input:not([type='radio']):hover,
+      textarea:hover,
+      select:hover {
+        border-color: color-mix(in srgb, var(--orca-foreground) 28%, var(--orca-input));
+      }
+      input:not([type='radio']):focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        border-color: var(--orca-ring);
+        box-shadow: 0 0 0 3px var(--ring-soft);
+      }
+      ::placeholder {
+        color: var(--orca-muted-foreground);
+        opacity: 0.8;
+      }
+      select {
+        padding-right: 30px;
+        appearance: none;
+        cursor: pointer;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%238b8f98' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
       }
       select option {
         color: var(--orca-popover-foreground);
         background: var(--orca-popover);
       }
       textarea {
+        min-height: 72px;
+        line-height: 1.5;
         resize: vertical;
       }
+
+      /* 버튼: 기본(테두리) · primary(채움) · ghost(테두리 없음) · danger(빨강) */
       button {
-        padding: 6px 12px;
+        padding: 5px 12px;
         font: inherit;
-        font-weight: 600;
-        color: inherit;
+        font-weight: 500;
+        color: var(--orca-foreground);
         white-space: nowrap;
         cursor: pointer;
-        background: transparent;
+        background: var(--orca-card);
         border: 1px solid var(--orca-border);
-        border-radius: var(--orca-radius);
+        border-radius: var(--r-md);
+        transition: background-color 0.12s, border-color 0.12s, opacity 0.12s;
       }
       button:hover:not(:disabled) {
         background: var(--orca-accent);
       }
+      button:active:not(:disabled) {
+        opacity: 0.85;
+      }
       button:disabled {
         cursor: default;
-        opacity: 0.5;
+        opacity: 0.45;
       }
       button.primary {
+        font-weight: 600;
         color: var(--orca-primary-foreground);
         background: var(--orca-primary);
         border-color: var(--orca-primary);
@@ -184,51 +216,82 @@
         opacity: 0.9;
       }
       button.ghost {
+        color: var(--orca-muted-foreground);
+        background: transparent;
         border-color: transparent;
+      }
+      button.ghost:hover:not(:disabled) {
+        color: var(--orca-foreground);
+        background: var(--hover);
       }
       button.danger {
         align-self: flex-start;
         color: var(--orca-destructive);
-        border-color: var(--orca-destructive);
+        background: transparent;
+        border-color: color-mix(in srgb, var(--orca-destructive) 55%, transparent);
+      }
+      button.danger:hover:not(:disabled) {
+        background: var(--danger-soft);
       }
       button.danger.solid {
+        font-weight: 600;
         color: var(--orca-destructive-foreground);
         background: var(--orca-destructive);
+        border-color: var(--orca-destructive);
       }
       button.danger.solid:hover:not(:disabled) {
         background: var(--orca-destructive);
         opacity: 0.9;
       }
       button.icon {
-        padding: 4px 8px;
+        min-width: 28px;
+        padding: 3px 8px;
       }
       :focus-visible {
         outline: 2px solid var(--orca-ring);
         outline-offset: 1px;
       }
+
+      /* 문구 */
       .muted {
         font-size: 12px;
         color: var(--orca-muted-foreground);
       }
       .error {
+        padding: 8px 10px;
         font-size: 12px;
         color: var(--orca-destructive);
+        background: var(--danger-soft);
+        border-left: 3px solid var(--orca-destructive);
+        border-radius: var(--r-sm);
       }
       .empty {
-        padding: 24px 0;
+        padding: 28px 0;
         text-align: center;
       }
       .badge {
-        padding: 0 6px;
+        padding: 0 7px;
         font-size: 11px;
+        font-weight: 600;
+        color: var(--orca-muted-foreground);
         background: var(--orca-card);
         border-radius: 999px;
       }
+
+      /* 목록 */
       .group-header {
         flex-wrap: wrap;
         padding: 6px 10px;
         background: var(--orca-muted);
-        border-radius: var(--orca-radius);
+        border-radius: var(--r-md);
+        transition: background-color 0.12s;
+      }
+      .group-header:hover {
+        background: color-mix(in srgb, var(--orca-muted) 80%, var(--orca-foreground) 6%);
+      }
+      .group-header h3 {
+        font-size: 12px;
+        font-weight: 650;
       }
       .group-body {
         display: flex;
@@ -240,13 +303,15 @@
         display: none;
       }
       .issue-card {
-        padding: 2px 6px 2px 2px;
-        background: var(--orca-background);
+        padding: 1px 6px 1px 2px;
+        background: transparent;
         border: 1px solid var(--orca-border);
-        border-radius: 6px;
+        border-radius: var(--r-md);
+        transition: background-color 0.12s, border-color 0.12s;
       }
       .issue-card:hover {
         background: var(--orca-card);
+        border-color: color-mix(in srgb, var(--orca-foreground) 22%, var(--orca-border));
       }
       .issue-open {
         display: flex;
@@ -254,10 +319,11 @@
         gap: 8px;
         align-items: baseline;
         min-width: 0;
-        padding: 6px 8px;
+        padding: 7px 8px;
         font-weight: 400;
         text-align: left;
         white-space: normal;
+        background: transparent;
         border: 0;
       }
       .issue-open:hover:not(:disabled) {
@@ -270,7 +336,7 @@
         font-size: 11px;
         font-weight: 600;
         color: #9dbcff;
-        background: rgb(122 162 247 / 18%);
+        background: rgb(122 162 247 / 16%);
         border-radius: 4px;
       }
       html.light .issue-id {
@@ -282,8 +348,9 @@
         overflow-wrap: anywhere;
       }
       .detail-title {
-        font-size: 14px;
-        font-weight: 600;
+        font-size: 15px;
+        font-weight: 650;
+        line-height: 1.4;
       }
       summary {
         overflow-wrap: anywhere;
@@ -310,6 +377,13 @@
       .description {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+        color: color-mix(in srgb, var(--orca-popover-foreground) 88%, transparent);
+      }
+      .run-history {
+        gap: 4px;
+        padding: 10px 12px;
+        background: var(--orca-card);
+        border-radius: var(--r-md);
       }
       .thumbs {
         display: flex;
@@ -328,7 +402,7 @@
         height: 72px;
         object-fit: cover;
         border: 1px solid var(--orca-border);
-        border-radius: var(--orca-radius);
+        border-radius: var(--r-md);
       }
       .thumb span {
         position: absolute;
@@ -358,21 +432,67 @@
       .images img {
         max-width: 100%;
         border: 1px solid var(--orca-border);
-        border-radius: var(--orca-radius);
+        border-radius: var(--r-md);
       }
+
+      /* 대화상자 */
       dialog {
         width: calc(100% - 24px);
         max-width: 420px;
-        padding: 16px;
+        max-height: calc(100vh - 24px);
+        padding: 18px;
+        overflow: auto;
         color: var(--orca-popover-foreground);
         background: var(--orca-popover);
         border: 1px solid var(--orca-border);
-        border-radius: 12px;
-        box-shadow: 0 12px 40px rgb(0 0 0 / 45%);
+        border-radius: var(--r-lg);
+        box-shadow: 0 16px 48px rgb(0 0 0 / 50%);
+      }
+      dialog[open] {
+        animation: pop 0.14s ease-out;
+      }
+      dialog::backdrop {
+        background: rgb(0 0 0 / 50%);
+        backdrop-filter: blur(2px);
+      }
+      @keyframes pop {
+        from {
+          opacity: 0;
+          transform: translateY(6px) scale(0.98);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        dialog[open] {
+          animation: none;
+        }
+        * {
+          transition: none !important;
+        }
+      }
+      dialog h2 {
+        font-size: 15px;
+      }
+      dialog .row {
+        flex-wrap: wrap;
+      }
+      /* 버튼 줄은 오른쪽 정렬: [취소] [확인]. 삭제(danger)는 왼쪽 끝에 둔다. */
+      dialog .row:has(> button.primary):not(:has(> .grow)),
+      dialog .row:has(> button.danger),
+      .confirm-actions {
+        justify-content: flex-end;
+        padding-top: 12px;
+        margin-top: 2px;
+        border-top: 1px solid var(--orca-border);
+      }
+      dialog .row:has(> button.primary):not(:has(> .grow)) > button.primary {
+        order: 2;
+      }
+      dialog .row > button.danger {
+        margin-right: auto;
       }
       .confirm-title {
         font-size: 15px;
-        font-weight: 600;
+        font-weight: 650;
         line-height: 1.4;
       }
       .confirm-body {
@@ -383,32 +503,52 @@
         background: var(--orca-card);
         border: 1px solid var(--orca-border);
         border-left: 3px solid var(--orca-primary);
-        border-radius: var(--orca-radius);
+        border-radius: var(--r-md);
       }
       .confirm-meta {
         display: grid;
         grid-template-columns: auto 1fr;
-        gap: 4px 12px;
-        padding: 8px 0;
+        gap: 4px 14px;
+        padding: 10px 0;
         border-top: 1px solid var(--orca-border);
+      }
+      .confirm-meta .muted {
+        font-size: 12px;
       }
       .confirm-ask {
-        padding-top: 4px;
-      }
-      .confirm-actions {
-        justify-content: flex-end;
-        padding-top: 12px;
-        border-top: 1px solid var(--orca-border);
+        padding-top: 2px;
       }
       .confirm-actions button {
         min-width: 72px;
-        padding: 7px 16px;
+        padding: 6px 16px;
       }
-      dialog::backdrop {
-        background: rgb(0 0 0 / 55%);
+
+      /* 좁은 패널 */
+      @media (max-width: 360px) {
+        #bar .lbl {
+          display: none;
+        }
+        #bar button {
+          padding: 5px 10px;
+        }
       }
-      .between {
-        justify-content: space-between;
+      @media (max-width: 300px) {
+        body {
+          padding: 10px 8px 8px;
+        }
+        dialog {
+          width: calc(100% - 16px);
+          padding: 14px;
+        }
+      }
+      @media (max-width: 260px) {
+        .issue-open {
+          flex-wrap: wrap;
+          row-gap: 2px;
+        }
+        .issue-title {
+          flex-basis: 100%;
+        }
       }
     </style>
   </head>
