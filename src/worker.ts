@@ -3,10 +3,10 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { buildBackup, handoffText, RESULT_MAX, type Project } from './logic'
+import { buildBackup, handoffText, isBackupFile, parseSettings, RESULT_MAX, type Project } from './logic'
 
 // worker에서 그냥 'orca'를 부르면 Windows는 앱 본체(Orca.exe)를 찾아 실행한다. 함께 설치된 CLI를 지정한다.
 // 셸을 거치지 않으므로 orca.cmd처럼 프롬프트의 줄바꿈이 망가지지 않는다.
@@ -50,8 +50,17 @@ function orcaCli(args: string[]): Promise<any> {
 }
 
 const IMAGE_DIR = join(homedir(), '.orca-issues', 'images')
-const BACKUP_DIR = join(homedir(), '.orca-issues', 'backups')
-const BACKUP_KEEP = 10
+const DEFAULT_BACKUP_DIR = join(homedir(), '.orca-issues', 'backups')
+// 시작 경로는 환경 변수로 받아서 명령 문자열에 사용자 입력이 섞이지 않게 한다.
+const PICK_FOLDER_PS = [
+  'Add-Type -AssemblyName System.Windows.Forms',
+  '[Console]::OutputEncoding=[Text.Encoding]::UTF8',
+  '$d=New-Object Windows.Forms.FolderBrowserDialog',
+  "$d.Description='자동 백업 폴더 선택'",
+  '$d.SelectedPath=$env:ISSUES_PICK_DIR',
+  '$owner=New-Object Windows.Forms.Form -Property @{TopMost=$true}',
+  "if($d.ShowDialog($owner) -eq 'OK'){[Console]::Out.Write($d.SelectedPath)}"
+].join(';')
 const MAX_IMAGE_BYTES = 10 << 20
 const IMAGE_TYPES: Record<string, string> = {
   'image/png': 'png',
@@ -218,7 +227,7 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
     })
   })
 
-  // 자동 백업: 저장소의 프로젝트와 결과를 ~/.orca-issues/backups에 남긴다. 내용이 같으면 새로 만들지 않고 최근 BACKUP_KEEP개만 둔다.
+  // 자동 백업: 저장소의 프로젝트와 결과를 설정한 백업 폴더에 남긴다. 내용이 같으면 새로 만들지 않고 설정한 개수만큼만 둔다.
   orca.panels.handle('backup.auto', async ({ reason }) => {
     const projects = ((await orca.storage.get('projects')) as Project[] | null) ?? []
     if (projects.length === 0) return { file: null }
@@ -228,20 +237,51 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
     }
     const now = new Date()
     const data = buildBackup(projects, results, now)
-    await mkdir(BACKUP_DIR, { recursive: true })
-    const files = (await readdir(BACKUP_DIR)).filter((f) => f.endsWith('.json')).sort()
+    const { backupKeep, backupDir } = parseSettings(await orca.storage.get('settings'))
+    const dir = backupDir || DEFAULT_BACKUP_DIR
+    await mkdir(dir, { recursive: true })
+    const files = (await readdir(dir)).filter(isBackupFile).sort()
     const strip = (t: string) => t.replace(/"exportedAt": "[^"]*"/, '')
     if (files.length > 0) {
-      const last = await readFile(join(BACKUP_DIR, files[files.length - 1]), 'utf8').catch(() => '')
+      const last = await readFile(join(dir, files[files.length - 1]), 'utf8').catch(() => '')
       if (strip(last) === strip(data)) return { file: null }
     }
     const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-')
-    const file = join(BACKUP_DIR, `${stamp}-${reason ?? 'auto'}.json`)
+    const file = join(dir, `${stamp}-${reason ?? 'auto'}.json`)
     await writeFile(file, data)
-    for (const old of [...files, basename(file)].sort().slice(0, -BACKUP_KEEP)) {
-      await rm(join(BACKUP_DIR, old), { force: true })
+    for (const old of [...files, basename(file)].sort().slice(0, -backupKeep)) {
+      await rm(join(dir, old), { force: true })
     }
     return { file }
+  })
+
+  orca.panels.handle('backup.defaultDir', async () => ({ dir: DEFAULT_BACKUP_DIR }))
+
+  // 저장 전에 경로를 확인한다. 실패를 나중의 자동 백업까지 미루지 않으려고 실제로 파일을 써 본다.
+  orca.panels.handle('backup.checkDir', async ({ dir }) => {
+    if (!isAbsolute(dir)) throw new Error('전체 경로를 입력하세요.')
+    await mkdir(dir, { recursive: true })
+    const probe = join(dir, `.orca-issues-${randomUUID()}.tmp`)
+    await writeFile(probe, '')
+    await rm(probe)
+    return { ok: true as const }
+  })
+
+  // 플러그인 API에 폴더 선택이 없어서 OS 창을 띄운다. 패널 요청은 30초면 끊기므로 기다리지 않고 결과를 저장소로 넘긴다.
+  orca.panels.handle('backup.pickDir', async ({ dir }) => {
+    const [cmd, args] =
+      process.platform === 'win32'
+        ? ['powershell', ['-NoProfile', '-STA', '-Command', PICK_FOLDER_PS]]
+        : process.platform === 'darwin'
+          ? ['osascript', ['-e', 'POSIX path of (choose folder)']]
+          : ['zenity', ['--file-selection', '--directory']]
+    execFile(cmd, args, { windowsHide: true, env: { ...process.env, ISSUES_PICK_DIR: dir } }, (err, stdout) => {
+      // macOS와 Linux는 취소도 0이 아닌 종료 코드로 끝난다. 명령이 없을 때만 code가 문자열이다.
+      const failed = err && (process.platform === 'win32' || typeof err.code === 'string')
+      const picked = { dir: failed ? '' : stdout.trim(), error: failed ? `폴더 선택 창을 열 수 없습니다: ${err.message}` : '' }
+      orca.storage.set('pickedDir', picked).catch(() => {})
+    })
+    return { ok: true as const }
   })
 
   // 매뉴얼(docs/manual.html, 이미지는 docs/img)을 기본 브라우저에서 연다. 파일 위치는 이 worker 파일을 기준으로 찾는다.

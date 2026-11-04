@@ -30,6 +30,12 @@ declare module 'orca' {
     'manual.open': { input: Record<string, never>; output: { ok: true } }
     /** 프로젝트와 결과를 백업 폴더에 남긴다. 직전 백업과 같으면 file이 null이다. */
     'backup.auto': { input: { reason?: string }; output: { file: string | null } }
+    /** 기본 자동 백업 폴더의 전체 경로. */
+    'backup.defaultDir': { input: Record<string, never>; output: { dir: string } }
+    /** 폴더를 만들고 쓸 수 있는지 확인한다. 쓸 수 없으면 오류를 던진다. */
+    'backup.checkDir': { input: { dir: string }; output: { ok: true } }
+    /** 폴더 선택 창을 띄우고 바로 끝난다. 고른 결과는 저장소의 pickedDir로 전달한다. */
+    'backup.pickDir': { input: { dir: string }; output: { ok: true } }
     // Orca는 패널과 worker 사이 메시지를 약 48KB로 제한해서 이미지를 조각으로 주고받는다.
     /** 빈 이미지 파일을 만들고 파일 이름을 돌려준다. */
     'image.start': { input: { type: string }; output: { name: string } }

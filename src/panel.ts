@@ -17,6 +17,7 @@ import {
   issueId,
   issuePrompt,
   parseBackup,
+  parseSettings,
   patchIssue,
   resultKey,
   runRequest,
@@ -50,11 +51,19 @@ const dialog = document.getElementById('run') as HTMLDialogElement
 const projectDialog = document.getElementById('project') as HTMLDialogElement
 const issueDialog = document.getElementById('issue') as HTMLDialogElement
 const detailDialog = document.getElementById('detail') as HTMLDialogElement
+const settingsDialog = document.getElementById('settings') as HTMLDialogElement
 
 let projects: Project[] = []
 let selectedKey = ''
 let lastRepo = ''
 let lastAgent = AGENTS[0].value
+let settings = parseSettings(null)
+// 설정 창에서 고치는 사본. 저장을 눌러야 settings에 들어간다.
+let settingsDraft = settings
+let defaultBackupDir = ''
+let settingsError = ''
+let savingSettings = false
+let pickingDir = false
 let saveError = ''
 let projectError = ''
 let editingKey: string | null = null
@@ -70,7 +79,7 @@ const issueDraft = {
   description: '',
   repoId: '',
   agent: AGENTS[0].value,
-  mode: 'new' as 'new' | 'existing',
+  mode: 'existing' as 'new' | 'existing',
   worktreeId: '',
   images: [] as { n: number; name: string }[],
   nextImage: 1
@@ -297,7 +306,11 @@ function dropResults(issues: Issue[]) {
 let backupTimer: ReturnType<typeof setTimeout> | undefined
 function scheduleAutoBackup() {
   clearTimeout(backupTimer)
-  backupTimer = setTimeout(() => orca.plugin.request('backup.auto', {}).catch(() => {}), 5000)
+  if (!settings.autoBackup) return
+  backupTimer = setTimeout(() => orca.plugin.request('backup.auto', {}).catch((e: Error) => {
+      saveError = `자동 백업 실패: ${e.message}`
+      render()
+    }), 5000)
 }
 
 function saveProjects() {
@@ -499,6 +512,7 @@ function clearIssueDraft() {
   issueDraft.description = ''
   issueDraft.images = []
   issueDraft.nextImage = 1
+  issueDraft.mode = 'existing'
   imageError = ''
 }
 
@@ -592,7 +606,7 @@ function issueForm(project: Project) {
     field(
       '설명',
       (draftDescription = el('textarea', {
-        rows: 3,
+        rows: 10,
         maxLength: 8000,
         placeholder: '이미지를 붙여넣을 수 있습니다',
         value: issueDraft.description,
@@ -1247,7 +1261,7 @@ function banners() {
     'div',
     { className: 'stack' },
     error,
-    el('div', {}, `백업에서 프로젝트 ${pendingRestore.projects.length}개, 이슈 ${issues}개를 복구합니다. 현재 데이터는 모두 대체되며, 복구 직전 상태는 백업 폴더(~/.orca-issues/backups)에 남깁니다.`),
+    el('div', {}, `백업에서 프로젝트 ${pendingRestore.projects.length}개, 이슈 ${issues}개를 복구합니다. 현재 데이터는 모두 대체되며, 복구 직전 상태는 백업 폴더(${settings.backupDir || '~/.orca-issues/backups'})에 남깁니다.`),
     el(
       'div',
       { className: 'row' },
@@ -1436,6 +1450,142 @@ function barLabel(label: string) {
   return [el('span', { className: 'ico' }, icon), el('span', { className: 'lbl' }, rest.join(' '))]
 }
 
+async function openSettings() {
+  try {
+    defaultBackupDir = (await orca.plugin.request('backup.defaultDir', {})).dir
+  } catch (e) {
+    saveError = `설정 열기 실패: ${(e as Error).message}`
+    return render()
+  }
+  settingsDraft = { ...settings, backupDir: settings.backupDir || defaultBackupDir }
+  settingsError = ''
+  pickingDir = false
+  renderSettingsDialog()
+  settingsDialog.showModal()
+}
+
+function pickBackupDir() {
+  pickingDir = true
+  settingsError = ''
+  renderSettingsDialog()
+  orca.plugin.request('backup.pickDir', { dir: settingsDraft.backupDir }).catch((e: Error) => {
+    pickingDir = false
+    settingsError = `폴더 선택 실패: ${e.message}`
+    renderSettingsDialog()
+  })
+}
+
+// worker가 폴더 선택 창의 결과를 남기면 사본에만 넣는다. 저장은 여전히 저장 버튼이 한다.
+async function applyPickedDir() {
+  const picked: { dir: string; error: string } | null = await orca.storage.get('pickedDir')
+  if (!picked) return
+  await orca.storage.delete('pickedDir')
+  pickingDir = false
+  if (picked.dir) settingsDraft.backupDir = picked.dir
+  settingsError = picked.error
+  if (settingsDialog.open) renderSettingsDialog()
+}
+
+async function saveSettings() {
+  const dir = settingsDraft.backupDir.trim()
+  const backupDir = dir === defaultBackupDir ? '' : dir
+  savingSettings = true
+  settingsError = ''
+  renderSettingsDialog()
+  try {
+    if (backupDir) await orca.plugin.request('backup.checkDir', { dir: backupDir })
+    // 확인하는 동안 창을 닫았으면 취소한 것이다.
+    if (settingsDialog.open) {
+      const next = parseSettings({ ...settingsDraft, backupDir })
+      await orca.storage.set('settings', next)
+      settings = next
+      settingsDialog.close()
+    }
+  } catch (e) {
+    settingsError = `저장 실패: ${(e as Error).message}`
+  }
+  savingSettings = false
+  if (settingsDialog.open) renderSettingsDialog()
+}
+
+// 복구 직전 백업은 데이터 보호용이라 자동 백업을 꺼도 남긴다.
+function renderSettingsDialog() {
+  settingsDialog.replaceChildren(
+    el(
+      'div',
+      { className: 'stack' },
+      el(
+        'div',
+        { className: 'row between' },
+        el('h2', {}, '설정'),
+        el('button', { type: 'button', className: 'ghost icon', ariaLabel: '닫기', onclick: () => settingsDialog.close() }, '✕')
+      ),
+      select(
+        '자동 백업',
+        [
+          { value: 'on', label: '켜기' },
+          { value: 'off', label: '끄기' }
+        ],
+        settingsDraft.autoBackup ? 'on' : 'off',
+        (value) => (settingsDraft.autoBackup = value === 'on')
+      ),
+      field(
+        '자동 백업 경로',
+        el(
+          'div',
+          { className: 'row' },
+          el(
+            'div',
+            { className: 'grow' },
+            el('input', {
+              value: settingsDraft.backupDir,
+              placeholder: defaultBackupDir,
+              spellcheck: false,
+              oninput: (e: any) => (settingsDraft.backupDir = e.target.value)
+            })
+          ),
+          el(
+            'button',
+            { type: 'button', disabled: pickingDir, style: 'white-space:nowrap', title: '폴더 선택 창을 엽니다', onclick: pickBackupDir },
+            pickingDir ? '선택 중…' : '찾아보기'
+          )
+        )
+      ),
+      field(
+        '자동 백업 보관 개수 (1~100)',
+        el('input', {
+          type: 'number',
+          min: 1,
+          max: 100,
+          value: settingsDraft.backupKeep,
+          oninput: (e: any) => (settingsDraft.backupKeep = e.target.value)
+        })
+      ),
+      el('div', { className: 'muted' }, '경로를 비우면 기본 경로를 씁니다. 경로를 바꿔도 기존 백업은 옮기지 않습니다. 개수를 줄이면 다음 백업 때 오래된 파일부터 지웁니다.'),
+      settingsError ? el('div', { className: 'error' }, settingsError) : null,
+      el(
+        'div',
+        { className: 'row' },
+        el('button', { type: 'button', className: 'primary', disabled: savingSettings, onclick: saveSettings }, '저장'),
+        el('button', { type: 'button', className: 'ghost', onclick: () => settingsDialog.close() }, '취소')
+      )
+    )
+  )
+}
+
+function settingsButton() {
+  return el(
+    'button',
+    {
+      type: 'button',
+      title: '설정',
+      ariaLabel: '설정',
+      onclick: openSettings
+    },
+    el('span', { className: 'ico' }, '⚙️')
+  )
+}
+
 // 하단바 왼쪽에 고정하는 매뉴얼 버튼. 오른쪽 버튼들은 BAR_ACTIONS가 맡는다.
 function manualButton() {
   return el(
@@ -1459,7 +1609,7 @@ function render() {
   document.getElementById('bar')!.replaceChildren(
     ...(selectMode && projects.length > 0
       ? selectBarItems()
-      : [manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, ariaLabel: a.label.split(' ').slice(1).join(' '), onclick: a.onclick }, ...barLabel(a.label)))])
+      : [settingsButton(), manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, ariaLabel: a.label.split(' ').slice(1).join(' '), onclick: a.onclick }, ...barLabel(a.label)))])
   )
   app.replaceChildren(view())
   renderDraftImages()
@@ -1737,10 +1887,11 @@ dialog.addEventListener('cancel', () => {
 
 async function boot() {
   try {
-    const [saved, key, repo, agent, folded] = await Promise.all(
-      ['projects', 'selectedKey', 'lastRepo', 'lastAgent', 'collapsed'].map((k) => orca.storage.get(k))
+    const [saved, key, repo, agent, folded, stored] = await Promise.all(
+      ['projects', 'selectedKey', 'lastRepo', 'lastAgent', 'collapsed', 'settings'].map((k) => orca.storage.get(k))
     )
     projects = saved ?? []
+    settings = parseSettings(stored)
     // 결과는 이슈와 따로 저장돼 있어서 한꺼번에 읽어 둔다.
     const keys: string[] = await orca.storage.keys()
     await Promise.all(
@@ -1772,7 +1923,10 @@ async function boot() {
     lastAgent = agent ?? lastAgent
     collapsed = new Set(folded ?? DEFAULT_COLLAPSED)
     render()
-    orca.storage.onDidChange(() => applyCompleted().catch(() => {}))
+    orca.storage.onDidChange(() => {
+      applyCompleted().catch(() => {})
+      applyPickedDir().catch(() => {})
+    })
     applyCompleted().catch(() => {})
   } catch (e) {
     // 빈 화면을 띄우면 다음 저장이 기존 데이터를 덮어쓴다. 오류만 보여주고 멈춘다.

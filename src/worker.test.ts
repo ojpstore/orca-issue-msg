@@ -1,5 +1,8 @@
 import { assert, test } from 'orca/testing'
-import { decodeChunk, imageExtension, imagePath, promptWithImages, runArgs } from './worker'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import activate, { decodeChunk, imageExtension, imagePath, promptWithImages, runArgs } from './worker'
 
 test('프롬프트는 줄바꿈 그대로 한 인자로 넘어간다', () => {
   const args = runArgs({ repoId: 'r1', agent: 'claude', name: 'ENG-1', prompt: 'a\n"b" & c' })
@@ -42,4 +45,34 @@ test('이미지가 있으면 프롬프트 끝에 절대 경로를 붙인다', ()
   const prompt = promptWithImages('p', [NAME])
   assert.ok(prompt.startsWith('p\n\n첨부 이미지:\n- '))
   assert.ok(prompt.includes(`- [Image #1] ${imagePath(NAME)}`))
+})
+
+test('자동 백업은 설정한 폴더에 쓰고, 백업 이름이 아닌 파일은 지우지 않는다', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'issues-backup-'))
+  try {
+    for (const name of ['package.json', '20260101-000000-auto.json', '20260102-000000-auto.json']) {
+      await writeFile(join(dir, name), '{}')
+    }
+    const stored: Record<string, unknown> = {
+      projects: [{ key: 'A', name: 'a', issues: [] }],
+      settings: { backupDir: dir, backupKeep: 2 }
+    }
+    const handlers: Record<string, (input: any) => Promise<any>> = {}
+    const orca = new Proxy(
+      {
+        storage: { get: async (k: string) => stored[k] ?? null, keys: async () => Object.keys(stored) },
+        panels: { handle: (name: string, fn: any) => (handlers[name] = fn) }
+      } as any,
+      { get: (target, k) => target[k] ?? new Proxy(() => {}, { get: (f, p) => (p === 'then' ? undefined : f) }) }
+    )
+    activate(orca)
+    const { file } = await handlers['backup.auto']({})
+    assert.ok(file.startsWith(dir))
+    const left = await readdir(dir)
+    assert.ok(left.includes('package.json'))
+    assert.ok(!left.includes('20260101-000000-auto.json'))
+    assert.equal(left.length, 3)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

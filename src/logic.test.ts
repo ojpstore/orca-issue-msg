@@ -6,7 +6,9 @@ import {
   cloneIssue,
   deleteIssues,
   handoffText,
+  isBackupFile,
   parseBackup,
+  parseSettings,
   resultKey,
   setStatuses,
   canRun,
@@ -217,6 +219,21 @@ test('실행 이력은 최근 20개만 남긴다', () => {
   assert.equal(next.length, 20)
   assert.equal(next[19].at, 99)
   assert.equal(next[0].at, 1)
+})
+
+test('설정은 없거나 잘못된 값을 기본값과 범위로 맞춘다', () => {
+  assert.deepEqual(parseSettings(null), { autoBackup: true, backupKeep: 10, backupDir: '' })
+  assert.deepEqual(parseSettings({ autoBackup: false, backupKeep: '3', backupDir: ' D:/b ' }), { autoBackup: false, backupKeep: 3, backupDir: 'D:/b' })
+  assert.equal(parseSettings({ backupKeep: 0 }).backupKeep, 10)
+  assert.equal(parseSettings({ backupKeep: 'x' }).backupKeep, 10)
+  assert.equal(parseSettings({ backupKeep: 500 }).backupKeep, 100)
+})
+
+test('백업 폴더 정리는 백업 이름 형식의 파일만 대상으로 한다', () => {
+  assert.ok(isBackupFile('20261104-133256-auto.json'))
+  assert.ok(isBackupFile('20261104-133256-before-restore.json'))
+  assert.ok(!isBackupFile('package.json'))
+  assert.ok(!isBackupFile('20261104-notes.json'))
 })
 
 test('백업은 결과를 이슈에 담고, 복구하면 다시 결과만 따로 나온다', () => {
