@@ -22,8 +22,14 @@ declare module 'orca' {
       }
       output: { ok: true; workspaceId?: string }
     }
-    /** 에이전트 결과를 HTML로 저장해 기본 브라우저의 새 창으로 연다. */
-    'result.open': { input: { title: string; question: string; text: string }; output: { ok: true } }
+    /** 저장소 key의 에이전트 결과를 HTML로 저장해 기본 브라우저의 새 창으로 연다. */
+    'result.open': { input: { title: string; question: string; key: string }; output: { ok: true } }
+    /** 이슈 문구와 저장소 key의 결과로 인계 문구를 만들어 클립보드에 복사한다. */
+    'result.copy': { input: { key: string; prompt: string }; output: { ok: true } }
+    /** 매뉴얼 HTML을 기본 브라우저에서 연다. */
+    'manual.open': { input: Record<string, never>; output: { ok: true } }
+    /** 프로젝트와 결과를 백업 폴더에 남긴다. 직전 백업과 같으면 file이 null이다. */
+    'backup.auto': { input: { reason?: string }; output: { file: string | null } }
     // Orca는 패널과 worker 사이 메시지를 약 48KB로 제한해서 이미지를 조각으로 주고받는다.
     /** 빈 이미지 파일을 만들고 파일 이름을 돌려준다. */
     'image.start': { input: { type: string }; output: { name: string } }

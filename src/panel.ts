@@ -1,18 +1,26 @@
 import {
   addIssue,
   AGENTS,
+  appendRun,
+  buildBackup,
   canRun,
+  cloneIssue,
   createProject,
   DEFAULT_COLLAPSED,
   deleteIssue,
+  deleteIssues,
   deleteProject,
   finalizeImages,
   groupIssues,
+  handoffText,
   imageToken,
   issueId,
   issuePrompt,
+  parseBackup,
   patchIssue,
+  resultKey,
   runRequest,
+  setStatuses,
   STATUSES,
   updateProject,
   type Issue,
@@ -264,32 +272,68 @@ async function pasteImages(e: ClipboardEvent) {
   renderDraftImages()
 }
 
+// 에이전트 결과는 값 하나 한도 때문에 이슈와 따로 저장하고, 화면에서는 이 맵에서 읽는다.
+const results = new Map<string, string>()
+const resultOf = (issue: Issue) => results.get(resultKey(issue)) ?? ''
+
+function saveResult(issue: Issue, text: string) {
+  const key = resultKey(issue)
+  results.set(key, text)
+  orca.storage.set(key, text).catch((e: Error) => {
+    saveError = `결과 저장 실패: ${e.message}`
+    render()
+  })
+  scheduleAutoBackup()
+}
+
+function dropResults(issues: Issue[]) {
+  for (const issue of issues) {
+    results.delete(resultKey(issue))
+    orca.storage.delete(resultKey(issue)).catch(() => {})
+  }
+}
+
+// 저장할 때마다 worker가 백업 폴더에 남기게 한다. 연달아 바뀌면 마지막 한 번만 요청한다.
+let backupTimer: ReturnType<typeof setTimeout> | undefined
+function scheduleAutoBackup() {
+  clearTimeout(backupTimer)
+  backupTimer = setTimeout(() => orca.plugin.request('backup.auto', {}).catch(() => {}), 5000)
+}
+
 function saveProjects() {
   orca.storage.set('projects', projects).catch((e: Error) => {
     saveError = `저장 실패: ${e.message}`
     render()
   })
+  scheduleAutoBackup()
+}
+
+// 이슈를 시작하거나 재개한 이력. 가장 최근 값에 덧붙인다.
+function runsPatch(key: string, number: number, agent: string, kind: 'run' | 'resume', workspaceId?: string) {
+  const current = projects.find((p) => p.key === key)?.issues.find((i) => i.number === number)
+  return { runs: appendRun(current?.runs, { at: Date.now(), agent, kind, ...(workspaceId ? { workspaceId } : {}) }) }
 }
 
 // worker가 남긴 '끝난 작업 트리' 목록을 보고 진행 중 이슈를 완료로 옮긴다.
 async function applyCompleted() {
-  const raw: (string | { workspaceId: string; result?: string })[] = (await orca.storage.get('completed')) ?? []
-  const done = raw.map((d) => (typeof d === 'string' ? { workspaceId: d, result: undefined } : d))
+  const raw: (string | { workspaceId: string; result?: string; resultKey?: string })[] = (await orca.storage.get('completed')) ?? []
+  const done = raw.map((d) => (typeof d === 'string' ? { workspaceId: d } : d) as { workspaceId: string; result?: string; resultKey?: string })
   if (done.length === 0) return
   await orca.storage.set('completed', [])
   // 종료 한 건마다, 그 트리에서 가장 먼저 시작한 진행 중 이슈 하나만 완료로 옮긴다.
   let changed = false
-  for (const { workspaceId: id, result } of done) {
+  for (const { workspaceId: id, result: inline, resultKey: pending } of done) {
+    // worker가 따로 저장해 둔 결과를 읽고, 이슈 키로 옮긴 뒤 임시 키를 지운다.
+    const result: string | undefined = pending ? ((await orca.storage.get(pending)) ?? undefined) : inline
+    if (pending) orca.storage.delete(pending).catch(() => {})
     const running = projects.flatMap((p) =>
       p.issues.filter((i) => i.status === 'in_progress' && i.workspaceId === id).map((i) => ({ key: p.key, i }))
     )
     running.sort((a, b) => (a.i.startedAt ?? a.i.createdAt) - (b.i.startedAt ?? b.i.createdAt))
     const first = running[0]
     if (!first) continue
-    projects = patchIssue(projects, first.key, first.i.number, {
-      status: 'done',
-      ...(result ? { result } : {})
-    })
+    projects = patchIssue(projects, first.key, first.i.number, { status: 'done' })
+    if (result) saveResult(first.i, result)
     changed = true
   }
   if (!changed) return
@@ -333,6 +377,7 @@ function openProjectDialog(project: Project | null) {
 }
 
 function removeProject(key: string) {
+  dropResults(projects.find((p) => p.key === key)?.issues ?? [])
   projects = deleteProject(projects, key)
   selectedKey = projects[0]?.key ?? ''
   editingKey = null
@@ -622,6 +667,31 @@ function issueForm(project: Project) {
 
 function issueRow(project: Project, issue: Issue) {
   const id = issueId(project, issue)
+  if (selectMode) {
+    const running = issue.status === 'in_progress'
+    return el(
+      'div',
+      { className: 'row issue-card' },
+      el(
+        'button',
+        {
+          type: 'button',
+          className: 'issue-open',
+          title: running ? '진행 중인 이슈는 선택할 수 없습니다' : '선택',
+          disabled: running,
+          onclick: () => {
+            if (selected.has(issue.number)) selected.delete(issue.number)
+            else selected.add(issue.number)
+            bulkDeleteAsk = false
+            render()
+          }
+        },
+        el('span', {}, selected.has(issue.number) ? '☑' : '☐'),
+        el('span', { className: 'issue-id' }, id),
+        el('span', { className: 'issue-title' }, issue.title)
+      )
+    )
+  }
   return el(
     'div',
     { className: 'row issue-card' },
@@ -662,7 +732,17 @@ function openDetail(key: string, number: number) {
 }
 
 function removeIssue(key: string, number: number) {
+  dropResults(projects.find((p) => p.key === key)?.issues.filter((i) => i.number === number) ?? [])
   projects = deleteIssue(projects, key, number)
+  detail = null
+  saveProjects()
+  detailDialog.close()
+  render()
+}
+
+function duplicateIssue(key: string, number: number) {
+  projects = cloneIssue(projects, key, number, Date.now())
+  issueQuery = ''
   detail = null
   saveProjects()
   detailDialog.close()
@@ -679,6 +759,7 @@ function detailActions(project: Project, issue: Issue) {
       'div',
       { className: 'row' },
       el('button', { type: 'button', className: 'danger', onclick: setConfirming(true) }, '이슈 삭제'),
+      el('button', { type: 'button', title: '같은 제목·설명·실행 설정으로 할 일 이슈를 새로 만듭니다', onclick: () => duplicateIssue(project.key, issue.number) }, '복제'),
       el('button', { type: 'button', className: 'ghost', onclick: () => detailDialog.close() }, '취소')
     )
   }
@@ -755,17 +836,6 @@ function titleEditor(current: string, update: (patch: Partial<Issue>) => void) {
 
 const RESUME_RESULT_MAX = 1500
 
-// 새 세션에 붙여 이어서 작업할 때 쓰는 인계 문구. 복사와 재개가 같이 쓴다.
-function handoffText(project: Project, issue: Issue, maxResult = Infinity) {
-  const result = (issue.result ?? '').trim()
-  return [
-    `이전 세션에서 진행한 이슈를 이어서 작업합니다.`,
-    `## 이슈\n${issuePrompt(project, issue)}`,
-    `## 이전 에이전트 결과\n${result.length > maxResult ? `${result.slice(0, maxResult)}…(이하 생략)` : result}`,
-    `위 내용을 참고해 이어서 작업해 주세요.`
-  ].join('\n\n')
-}
-
 // ponytail: Orca CLI에 세션 재개 명령이 없어, 같은 작업 트리에서 에이전트를 새로 열고 인계 문구를 프롬프트로 넘긴다.
 function resumeButton(project: Project, issue: Issue) {
   if (!issue.repoId || !issue.workspaceId) return null
@@ -786,10 +856,14 @@ function resumeButton(project: Project, issue: Issue) {
             {
               ...runRequest(project, issue, issue.repoId!, issue.agent ?? AGENTS[0].value, tree.id),
               // 재개는 토큰을 아끼려고 결과 앞부분만 넘긴다. 전체가 필요하면 복사 버튼을 쓴다.
-              prompt: handoffText(project, issue, RESUME_RESULT_MAX)
+              prompt: handoffText(issuePrompt(project, issue), resultOf(issue), RESUME_RESULT_MAX)
             },
             { timeoutMs: 120000 }
           )
+          projects = patchIssue(projects, project.key, issue.number, runsPatch(project.key, issue.number, issue.agent ?? AGENTS[0].value, 'resume', tree.id))
+          saveProjects()
+          render()
+          renderDetail()
         } catch (e) {
           saveError = `재개 실패: ${(e as Error).message}`
           render()
@@ -801,6 +875,22 @@ function resumeButton(project: Project, issue: Issue) {
     '▷ 워크트리에서 재개'
   )
   return btn
+}
+
+function runHistory(issue: Issue) {
+  const runs = issue.runs ?? []
+  if (runs.length === 0) return null
+  const label = (id: string) => AGENTS.find((a) => a.value === id)?.label ?? id
+  return el(
+    'div',
+    { className: 'stack run-history' },
+    el('h3', {}, `실행 이력 ${runs.length}`),
+    ...[...runs]
+      .reverse()
+      .map((r) =>
+        el('div', { className: 'muted' }, `${new Date(r.at).toLocaleString('ko-KR')} · ${label(r.agent)} · ${r.kind === 'resume' ? '재개' : '실행'}`)
+      )
+  )
 }
 
 function renderDetail() {
@@ -837,7 +927,7 @@ function renderDetail() {
           imageTag(name)
         ])
       ),
-      issue.status === 'done' && issue.result
+      issue.status === 'done' && resultOf(issue)
         ? el(
             'div',
             { className: 'row between' },
@@ -852,9 +942,8 @@ function renderDetail() {
                   title: '새 세션에 이어서 작업할 수 있게 이슈와 결과를 복사',
                   onclick: (e: Event) => {
                     const btn = e.currentTarget as HTMLButtonElement
-                    const text = handoffText(project, issue)
                     orca.plugin
-                      .request('result.copy', { text })
+                      .request('result.copy', { key: resultKey(issue), prompt: issuePrompt(project, issue) })
                       .then(() => {
                         btn.textContent = '복사됨'
                         setTimeout(() => (btn.textContent = '복사'), 1500)
@@ -872,7 +961,7 @@ function renderDetail() {
                     .request('result.open', {
                       title: issueId(project, issue),
                       question: issuePrompt(project, issue),
-                      text: issue.result ?? ''
+                      key: resultKey(issue)
                     })
                     .catch((e: Error) => {
                       saveError = `결과 열기 실패: ${e.message}`
@@ -887,6 +976,7 @@ function renderDetail() {
       issue.status === 'done' ? resumeButton(project, issue) : null,
       select('상태', STATUSES, issue.status, (status) => update({ status })),
       el('div', { className: 'muted' }, `${new Date(issue.createdAt).toLocaleString('ko-KR')} 생성`),
+      runHistory(issue),
       el('hr'),
       detailActions(project, issue)
     )
@@ -929,8 +1019,9 @@ async function runBatch(current: Batch) {
       )
       projects = patchIssue(projects, current.project.key, issue.number, {
         status: 'in_progress',
-      startedAt: Date.now(),
-        ...(started.workspaceId ? { workspaceId: started.workspaceId } : {})
+        startedAt: Date.now(),
+        ...(started.workspaceId ? { workspaceId: started.workspaceId } : {}),
+        ...runsPatch(current.project.key, issue.number, issue.agent ?? AGENTS[0].value, 'run', started.workspaceId)
       })
       saveProjects()
     } catch (e) {
@@ -990,6 +1081,19 @@ function renderBatch() {
 
 let issueQuery = ''
 
+// 여러 이슈를 골라 한꺼번에 삭제하거나 상태를 바꾸는 선택 모드.
+let selectMode = false
+const selected = new Set<number>()
+let bulkDeleteAsk = false
+
+function exitSelectMode() {
+  selectMode = false
+  bulkDeleteAsk = false
+  selected.clear()
+}
+
+const currentProject = () => projects.find((p) => p.key === selectedKey) ?? projects[0]
+
 function issueSearch(project: Project, box: HTMLElement) {
   const input = el('input', {
     type: 'search',
@@ -1012,7 +1116,7 @@ function issueList(project: Project) {
   // 검색 중에는 일치하는 이슈가 있는 그룹만 펼쳐 보여준다.
   const query = issueQuery.trim().toLowerCase()
   const matches = (i: Issue) =>
-    `${issueId(project, i)} ${i.title} ${i.description} ${i.result ?? ''}`.toLowerCase().includes(query)
+    `${issueId(project, i)} ${i.title} ${i.description} ${resultOf(i)}`.toLowerCase().includes(query)
   const groups = groupIssues(project)
     .map((g) => ({ ...g, issues: query ? g.issues.filter(matches) : g.issues }))
     .filter((g) => !query || g.issues.length > 0)
@@ -1062,15 +1166,30 @@ function issueList(project: Project) {
 }
 
 // 가져온 백업 파일. 사용자가 확인하기 전에는 현재 데이터를 건드리지 않는다.
-let pendingRestore: Project[] | null = null
+let pendingRestore: { projects: Project[]; results: Record<string, string> } | null = null
 
-function parseBackup(text: string): Project[] {
-  const data = JSON.parse(text)
-  const list = data?.projects
-  if (!Array.isArray(list) || !list.every((p) => p && typeof p.key === 'string' && typeof p.name === 'string' && Array.isArray(p.issues))) {
-    throw new Error('이 플러그인의 백업 파일이 아닙니다.')
+// 복구 전에 현재 상태를 백업 폴더에 남기고, 결과 키까지 통째로 바꾼다.
+async function restoreBackup(data: { projects: Project[]; results: Record<string, string> }) {
+  try {
+    await orca.plugin.request('backup.auto', { reason: 'before-restore' })
+    for (const k of (await orca.storage.keys()) as string[]) if (k.startsWith('result:')) await orca.storage.delete(k)
+    results.clear()
+    for (const [k, v] of Object.entries(data.results)) {
+      await orca.storage.set(k, v)
+      results.set(k, v)
+    }
+    projects = data.projects
+    selectedKey = projects[0]?.key ?? ''
+    saveSetting('selectedKey', selectedKey)
+    saveProjects()
+    saveError = ''
+  } catch (e) {
+    saveError = `복구 실패: ${(e as Error).message}`
   }
-  return list as Project[]
+  pendingRestore = null
+  selectMode = false
+  selected.clear()
+  render()
 }
 
 function importBackup() {
@@ -1092,13 +1211,43 @@ function importBackup() {
 
 function banners() {
   const error = saveError ? el('div', { className: 'error' }, saveError) : null
+  if (bulkDeleteAsk && selected.size > 0) {
+    const project = currentProject()
+    return el(
+      'div',
+      { className: 'stack' },
+      error,
+      el('div', {}, `선택한 이슈 ${selected.size}개를 삭제합니다. 되돌릴 수 없습니다.`),
+      el(
+        'div',
+        { className: 'row' },
+        el(
+          'button',
+          {
+            type: 'button',
+            className: 'danger solid',
+            onclick: () => {
+              const numbers = [...selected]
+              dropResults(project.issues.filter((i) => selected.has(i.number)))
+              projects = deleteIssues(projects, project.key, numbers)
+              exitSelectMode()
+              saveProjects()
+              render()
+            }
+          },
+          '삭제 확인'
+        ),
+        el('button', { type: 'button', className: 'ghost', onclick: () => ((bulkDeleteAsk = false), render()) }, '취소')
+      )
+    )
+  }
   if (!pendingRestore) return error
-  const issues = pendingRestore.reduce((n, p) => n + p.issues.length, 0)
+  const issues = pendingRestore.projects.reduce((n, p) => n + p.issues.length, 0)
   return el(
     'div',
     { className: 'stack' },
     error,
-    el('div', {}, `백업에서 프로젝트 ${pendingRestore.length}개, 이슈 ${issues}개를 복구합니다. 현재 데이터는 모두 대체됩니다.`),
+    el('div', {}, `백업에서 프로젝트 ${pendingRestore.projects.length}개, 이슈 ${issues}개를 복구합니다. 현재 데이터는 모두 대체되며, 복구 직전 상태는 백업 폴더(~/.orca-issues/backups)에 남깁니다.`),
     el(
       'div',
       { className: 'row' },
@@ -1107,14 +1256,7 @@ function banners() {
         {
           type: 'button',
           className: 'primary',
-          onclick: () => {
-            projects = pendingRestore!
-            pendingRestore = null
-            selectedKey = projects[0]?.key ?? ''
-            saveSetting('selectedKey', selectedKey)
-            saveProjects()
-            render()
-          }
+          onclick: () => restoreBackup(pendingRestore!)
         },
         '복구 확인'
       ),
@@ -1179,6 +1321,7 @@ function view() {
       (key) => {
         selectedKey = key
         issueQuery = ''
+        exitSelectMode()
         saveSetting('selectedKey', key)
         render()
       }
@@ -1209,6 +1352,16 @@ function view() {
 // 하단 버튼바에 들어갈 버튼. 기능을 추가할 때 여기에 { label, title, onclick }를 넣는다.
 const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
   {
+    label: '☑ 선택',
+    title: '이슈를 여러 개 골라 삭제하거나 상태를 바꿉니다',
+    onclick: () => {
+      if (projects.length === 0) return
+      selectMode = true
+      selected.clear()
+      render()
+    }
+  },
+  {
     label: '⬇ 백업',
     title: '프로젝트와 이슈 데이터를 JSON 파일로 저장',
     // ponytail: 이미지 첨부 파일은 포함하지 않는다(이슈에는 파일명만 저장돼 있다). 필요하면 worker에서 묶어 보낸다.
@@ -1220,7 +1373,7 @@ const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
         .saveAs({
           suggestedName: `issues-backup-${stamp}.json`,
           mimeType: 'application/json',
-          data: JSON.stringify({ version: 1, exportedAt: d.toISOString(), projects }, null, 2)
+          data: buildBackup(projects, Object.fromEntries(results), d)
         })
         .catch((e: Error) => {
           saveError = `백업 실패: ${e.message}`
@@ -1231,9 +1384,75 @@ const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
   { label: '⬆ 임포트', title: '백업 JSON 파일에서 프로젝트와 이슈 복구', onclick: importBackup }
 ]
 
+// 선택 모드의 하단바: 전체 선택, 상태 변경, 삭제, 종료.
+function selectBarItems() {
+  const project = currentProject()
+  const choosable = project.issues.filter((i) => i.status !== 'in_progress').map((i) => i.number)
+  const status = el(
+    'select',
+    {
+      title: '선택한 이슈의 상태를 바꿉니다',
+      ariaLabel: '상태 변경',
+      disabled: selected.size === 0,
+      style: 'width:auto',
+      onchange: (e: any) => {
+        if (!e.target.value) return
+        projects = setStatuses(projects, project.key, [...selected], e.target.value)
+        exitSelectMode()
+        saveProjects()
+        render()
+      }
+    },
+    el('option', { value: '' }, '상태 변경'),
+    ...STATUSES.map((s) => el('option', { value: s.value }, s.label))
+  )
+  return [
+    el(
+      'button',
+      {
+        type: 'button',
+        onclick: () => {
+          if (selected.size === choosable.length) selected.clear()
+          else choosable.forEach((n) => selected.add(n))
+          bulkDeleteAsk = false
+          render()
+        }
+      },
+      selected.size === choosable.length && choosable.length > 0 ? '선택 해제' : '전체 선택'
+    ),
+    status,
+    el(
+      'button',
+      { type: 'button', className: 'danger', disabled: selected.size === 0, onclick: () => ((bulkDeleteAsk = true), render()) },
+      `삭제 (${selected.size})`
+    ),
+    el('button', { type: 'button', className: 'ghost', onclick: () => (exitSelectMode(), render()) }, '완료')
+  ]
+}
+
+// 하단바 왼쪽에 고정하는 매뉴얼 버튼. 오른쪽 버튼들은 BAR_ACTIONS가 맡는다.
+function manualButton() {
+  return el(
+    'button',
+    {
+      type: 'button',
+      title: '이 플러그인의 사용 매뉴얼을 웹 브라우저로 엽니다',
+      style: 'margin-right:auto',
+      onclick: () =>
+        orca.plugin.request('manual.open', {}).catch((e: Error) => {
+          saveError = `매뉴얼 열기 실패: ${e.message}`
+          render()
+        })
+    },
+    '📖 매뉴얼'
+  )
+}
+
 function render() {
   document.getElementById('bar')!.replaceChildren(
-    ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, onclick: a.onclick }, a.label))
+    ...(selectMode && projects.length > 0
+      ? selectBarItems()
+      : [manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, onclick: a.onclick }, a.label))])
   )
   app.replaceChildren(view())
   renderDraftImages()
@@ -1316,7 +1535,8 @@ async function startRun(current: Run) {
     projects = patchIssue(projects, current.project.key, current.issue.number, {
       status: 'in_progress',
       startedAt: Date.now(),
-      ...(started.workspaceId ? { workspaceId: started.workspaceId } : {})
+      ...(started.workspaceId ? { workspaceId: started.workspaceId } : {}),
+      ...runsPatch(current.project.key, current.issue.number, lastAgent, 'run', started.workspaceId)
     })
     saveProjects()
     render()
@@ -1514,6 +1734,32 @@ async function boot() {
       ['projects', 'selectedKey', 'lastRepo', 'lastAgent', 'collapsed'].map((k) => orca.storage.get(k))
     )
     projects = saved ?? []
+    // 결과는 이슈와 따로 저장돼 있어서 한꺼번에 읽어 둔다.
+    const keys: string[] = await orca.storage.keys()
+    await Promise.all(
+      keys
+        .filter((k) => k.startsWith('result:'))
+        .map(async (k) => {
+          const v = await orca.storage.get(k)
+          if (typeof v === 'string') results.set(k, v)
+        })
+    )
+    // 이전 형식(결과가 이슈 안에 있던 데이터)은 따로 옮기고 이슈에서는 뺀다.
+    let migrated = false
+    for (const p of projects) {
+      for (const i of p.issues) {
+        if (!i.result) continue
+        if (!results.has(resultKey(i))) {
+          results.set(resultKey(i), i.result)
+          await orca.storage.set(resultKey(i), i.result)
+        }
+        migrated = true
+      }
+    }
+    if (migrated) {
+      projects = projects.map((p) => ({ ...p, issues: p.issues.map(({ result: _moved, ...issue }) => issue) }))
+      saveProjects()
+    }
     selectedKey = key ?? ''
     lastRepo = repo ?? ''
     lastAgent = agent ?? lastAgent

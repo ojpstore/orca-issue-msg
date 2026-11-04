@@ -1,10 +1,12 @@
 // 플러그인 API에는 작업 트리 생성이 없어서 orca CLI를 호출한다.
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
+import { buildBackup, handoffText, RESULT_MAX, type Project } from './logic'
 
 // worker에서 그냥 'orca'를 부르면 Windows는 앱 본체(Orca.exe)를 찾아 실행한다. 함께 설치된 CLI를 지정한다.
 // 셸을 거치지 않으므로 orca.cmd처럼 프롬프트의 줄바꿈이 망가지지 않는다.
@@ -15,9 +17,7 @@ const ORCA_CLI = join(resources, 'bin', process.platform === 'win32' ? 'orca.exe
 const CLI_ENV = { ...process.env, APPDATA: process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming') }
 
 // Orca가 에이전트의 마지막 답변을 남기는 파일에서 해당 pane의 답변을 읽는다. 기록이 늦을 수 있어 잠깐 기다리며 재시도한다.
-// ponytail: 답변 앞 4000자만 저장한다(저장소 값 한도). 늘리려면 이슈별 키로 나눈다.
 const STATUS_FILE = join(CLI_ENV.APPDATA, 'orca', 'agent-hooks', 'last-status.json')
-const RESULT_MAX = 4000
 async function lastAnswer(paneKey: string): Promise<string | undefined> {
   let text: string | undefined
   for (let i = 0; i < 4; i++) {
@@ -50,6 +50,8 @@ function orcaCli(args: string[]): Promise<any> {
 }
 
 const IMAGE_DIR = join(homedir(), '.orca-issues', 'images')
+const BACKUP_DIR = join(homedir(), '.orca-issues', 'backups')
+const BACKUP_KEEP = 10
 const MAX_IMAGE_BYTES = 10 << 20
 const IMAGE_TYPES: Record<string, string> = {
   'image/png': 'png',
@@ -134,9 +136,15 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (e.state !== 'done' || !working.includes(pane)) return
     await orca.storage.set('working', working.filter((p) => p !== pane))
     // 종료 한 번에 한 줄씩 쌓는다. 같은 트리를 쓰는 이슈를 한꺼번에 완료하지 않기 위해서다.
+    // 결과는 값 하나 한도(256KiB) 때문에 따로 저장하고, 목록에는 그 키만 남긴다. 패널이 이슈 키로 옮긴다.
     const result = await lastAnswer(pane)
+    let resultKey: string | undefined
+    if (result) {
+      resultKey = `pending:${randomUUID()}`
+      await orca.storage.set(resultKey, result)
+    }
     const list: unknown[] = (await orca.storage.get('completed')) ?? []
-    await orca.storage.set('completed', [...list, { workspaceId: e.workspaceId, ...(result ? { result } : {}) }])
+    await orca.storage.set('completed', [...list, { workspaceId: e.workspaceId, ...(resultKey ? { resultKey } : {}) }])
   })
 
   orca.panels.handle('repos.list', async () => {
@@ -164,7 +172,8 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { ok: true as const, ...(workspaceId ? { workspaceId } : {}) }
   })
 
-  orca.panels.handle('result.open', async ({ title, question, text }) => {
+  orca.panels.handle('result.open', async ({ title, question, key }) => {
+    const text = ((await orca.storage.get(key)) as string | null) ?? ''
     const escape = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
     const dir = join(homedir(), '.orca-issues', 'results')
     await mkdir(dir, { recursive: true })
@@ -194,7 +203,9 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
   })
 
   // 패널 iframe은 클립보드 쓰기가 막혀 있어서(navigator.clipboard 거부, execCommand는 무반응) worker가 OS 명령으로 복사한다.
-  orca.panels.handle('result.copy', ({ text }) => {
+  // 패널↔worker 메시지는 약 48KB라 결과 본문은 보내지 않고, worker가 저장소에서 읽어 문구를 만든다.
+  orca.panels.handle('result.copy', async ({ key, prompt }) => {
+    const text = handoffText(prompt, ((await orca.storage.get(key)) as string | null) ?? '')
     const [cmd, args] =
       process.platform === 'win32'
         ? ['powershell', ['-NoProfile', '-Command', '[Console]::InputEncoding=[Text.Encoding]::UTF8; [Console]::In.ReadToEnd() | Set-Clipboard']]
@@ -205,6 +216,48 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
       const child = execFile(cmd, args, { windowsHide: true }, (err) => (err ? reject(err) : resolve({ ok: true })))
       child.stdin!.end(text)
     })
+  })
+
+  // 자동 백업: 저장소의 프로젝트와 결과를 ~/.orca-issues/backups에 남긴다. 내용이 같으면 새로 만들지 않고 최근 BACKUP_KEEP개만 둔다.
+  orca.panels.handle('backup.auto', async ({ reason }) => {
+    const projects = ((await orca.storage.get('projects')) as Project[] | null) ?? []
+    if (projects.length === 0) return { file: null }
+    const results: Record<string, string> = {}
+    for (const k of (await orca.storage.keys()).filter((k: string) => k.startsWith('result:'))) {
+      results[k] = ((await orca.storage.get(k)) as string | null) ?? ''
+    }
+    const now = new Date()
+    const data = buildBackup(projects, results, now)
+    await mkdir(BACKUP_DIR, { recursive: true })
+    const files = (await readdir(BACKUP_DIR)).filter((f) => f.endsWith('.json')).sort()
+    const strip = (t: string) => t.replace(/"exportedAt": "[^"]*"/, '')
+    if (files.length > 0) {
+      const last = await readFile(join(BACKUP_DIR, files[files.length - 1]), 'utf8').catch(() => '')
+      if (strip(last) === strip(data)) return { file: null }
+    }
+    const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-')
+    const file = join(BACKUP_DIR, `${stamp}-${reason ?? 'auto'}.json`)
+    await writeFile(file, data)
+    for (const old of [...files, basename(file)].sort().slice(0, -BACKUP_KEEP)) {
+      await rm(join(BACKUP_DIR, old), { force: true })
+    }
+    return { file }
+  })
+
+  // 매뉴얼(docs/manual.html, 이미지는 docs/img)을 기본 브라우저에서 연다. 파일 위치는 이 worker 파일을 기준으로 찾는다.
+  orca.panels.handle('manual.open', async () => {
+    const file = fileURLToPath(new URL('../docs/manual.html', import.meta.url))
+    await stat(file).catch(() => {
+      throw new Error(`매뉴얼 파일을 찾을 수 없습니다: ${file}`)
+    })
+    const [cmd, args] =
+      process.platform === 'win32'
+        ? ['cmd', ['/c', 'start', '', file]]
+        : process.platform === 'darwin'
+          ? ['open', [file]]
+          : ['xdg-open', [file]]
+    execFile(cmd, args, { windowsHide: true }, () => {})
+    return { ok: true as const }
   })
 
   orca.panels.handle('image.start', async ({ type }) => {

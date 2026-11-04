@@ -1,6 +1,14 @@
 import { assert, test } from 'orca/testing'
 import {
   addIssue,
+  appendRun,
+  buildBackup,
+  cloneIssue,
+  deleteIssues,
+  handoffText,
+  parseBackup,
+  resultKey,
+  setStatuses,
   canRun,
   createProject,
   DEFAULT_COLLAPSED,
@@ -184,4 +192,57 @@ test('이슈 삭제는 그 이슈만 지우고 번호는 다시 쓰지 않는다
   )
   const [next] = addIssue([project], 'ENG', { title: '새 이슈', description: '' }, 3)
   assert.equal(next.issues[1].number, 3)
+})
+
+test('복제는 같은 내용의 할 일 이슈를 새 번호로 만들고 결과와 이력은 가져오지 않는다', () => {
+  let list = withIssues()
+  list = patchIssue(list, 'ENG', 1, { status: 'done', result: '결과', runs: [{ at: 1, agent: 'claude', kind: 'run' }] })
+  const [project] = cloneIssue(list, 'ENG', 1, 9)
+  const copy = project.issues[2]
+  assert.equal(copy.number, 3)
+  assert.equal(copy.status, 'todo')
+  assert.equal(copy.title, '첫 이슈')
+  assert.equal(copy.result, undefined)
+  assert.equal(copy.runs, undefined)
+})
+
+test('여러 이슈 삭제와 상태 변경은 고른 번호에만 적용된다', () => {
+  assert.deepEqual(deleteIssues(withIssues(), 'ENG', [1])[0].issues.map((i) => i.number), [2])
+  assert.deepEqual(setStatuses(withIssues(), 'ENG', [2], 'done')[0].issues.map((i) => i.status), ['todo', 'done'])
+})
+
+test('실행 이력은 최근 20개만 남긴다', () => {
+  const full = Array.from({ length: 20 }, (_, at) => ({ at, agent: 'claude', kind: 'run' as const }))
+  const next = appendRun(full, { at: 99, agent: 'claude', kind: 'resume' })
+  assert.equal(next.length, 20)
+  assert.equal(next[19].at, 99)
+  assert.equal(next[0].at, 1)
+})
+
+test('백업은 결과를 이슈에 담고, 복구하면 다시 결과만 따로 나온다', () => {
+  const list = withIssues()
+  const results = { [resultKey(list[0].issues[0])]: '긴 결과' }
+  const restored = parseBackup(buildBackup(list, results, new Date(0)))
+  assert.deepEqual(restored.results, results)
+  assert.equal(restored.projects[0].issues[0].result, undefined)
+})
+
+test('예전 형식 백업(결과가 이슈 안에 있는 파일)도 읽는다', () => {
+  const list = patchIssue(withIssues(), 'ENG', 1, { result: '옛 결과' })
+  const restored = parseBackup(JSON.stringify({ version: 1, projects: list }))
+  assert.equal(restored.results[resultKey(list[0].issues[0])], '옛 결과')
+  assert.throws(() => parseBackup('{"projects":3}'))
+})
+
+test('인계 문구는 결과를 최대 길이에서 자른다', () => {
+  assert.ok(handoffText('ENG-1 제목', 'x'.repeat(10), 4).includes('xxxx…(이하 생략)'))
+  assert.ok(handoffText('ENG-1 제목', '짧은 결과').includes('짧은 결과'))
+})
+
+test('저장소가 undefined를 거부하므로 만들거나 복제한 이슈에는 undefined 값이 없다', () => {
+  const [made] = addIssue(make([], '엔진', 'eng'), 'ENG', { title: '새 트리', description: '', mode: 'new' }, 1)
+  const [copy] = cloneIssue(withIssues(), 'ENG', 1, 9)
+  for (const issue of [made.issues[0], copy.issues[2]]) {
+    assert.deepEqual(issue, JSON.parse(JSON.stringify(issue)))
+  }
 })

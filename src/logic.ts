@@ -31,8 +31,15 @@ export type Issue = {
   worktreeId?: string
   workspaceId?: string
   startedAt?: number
+  // 이전에는 결과를 여기에 넣었다. 지금은 따로 저장하고, 백업 파일과 옛 데이터에만 남는다.
   result?: string
+  runs?: RunRecord[]
 }
+
+// 이슈를 실행하거나 재개한 이력. 최근 MAX_RUNS개만 남긴다.
+export type RunRecord = { at: number; agent: string; kind: 'run' | 'resume'; workspaceId?: string }
+export const MAX_RUNS = 20
+export const appendRun = (runs: RunRecord[] | undefined, run: RunRecord) => [...(runs ?? []), run].slice(-MAX_RUNS)
 
 export type Project = {
   key: string
@@ -102,18 +109,21 @@ export function addIssue(
           nextNumber: p.nextNumber + 1,
           issues: [
             ...p.issues,
-            {
-              title: fields.title.trim(),
-              description: fields.description.trim(),
-              status: 'todo',
-              createdAt: now,
-              images: fields.images ?? [],
-              repoId: fields.repoId,
-              agent: fields.agent,
-              mode: fields.mode,
-              worktreeId: fields.mode === 'existing' ? fields.worktreeId : undefined,
-              number: p.nextNumber
-            }
+            // Orca 저장소는 undefined 값을 거부한다(Invalid input). 값이 없는 키는 아예 넣지 않는다.
+            Object.fromEntries(
+              Object.entries({
+                title: fields.title.trim(),
+                description: fields.description.trim(),
+                status: 'todo',
+                createdAt: now,
+                images: fields.images ?? [],
+                repoId: fields.repoId,
+                agent: fields.agent,
+                mode: fields.mode,
+                worktreeId: fields.mode === 'existing' ? fields.worktreeId : undefined,
+                number: p.nextNumber
+              }).filter(([, v]) => v !== undefined)
+            ) as Issue
           ]
         }
       : p
@@ -182,4 +192,74 @@ export function runRequest(
     prompt: issuePrompt(project, issue),
     images: issue.images ?? []
   }
+}
+
+// 에이전트 결과는 값 하나가 256KiB를 넘을 수 없어서 이슈와 따로 저장한다. 한글은 글자당 최대 3바이트라 8만 자로 막는다.
+// 프로젝트 키를 바꿔도 이어지도록 번호와 생성 시각으로 키를 만든다.
+export const RESULT_MAX = 80_000
+export const resultKey = (issue: Pick<Issue, 'number' | 'createdAt'>) => `result:${issue.number}-${issue.createdAt}`
+
+export function cloneIssue(projects: Project[], key: string, number: number, now: number) {
+  const src = projects.find((p) => p.key === key)?.issues.find((i) => i.number === number)
+  if (!src) return projects
+  const { title, description, images, repoId, agent, mode, worktreeId } = src
+  return addIssue(projects, key, { title, description, images, repoId, agent, mode, worktreeId }, now)
+}
+
+export function deleteIssues(projects: Project[], key: string, numbers: number[]) {
+  const gone = new Set(numbers)
+  return projects.map((p) => (p.key === key ? { ...p, issues: p.issues.filter((i) => !gone.has(i.number)) } : p))
+}
+
+export function setStatuses(projects: Project[], key: string, numbers: number[], status: string) {
+  const chosen = new Set(numbers)
+  return projects.map((p) =>
+    p.key === key ? { ...p, issues: p.issues.map((i) => (chosen.has(i.number) ? { ...i, status } : i)) } : p
+  )
+}
+
+// 새 세션에 붙여 이어서 작업할 때 쓰는 인계 문구. 복사와 재개가 같이 쓴다.
+export function handoffText(prompt: string, result: string, maxResult = Infinity) {
+  const text = result.trim()
+  return [
+    '이전 세션에서 진행한 이슈를 이어서 작업합니다.',
+    `## 이슈\n${prompt}`,
+    `## 이전 에이전트 결과\n${text.length > maxResult ? `${text.slice(0, maxResult)}…(이하 생략)` : text}`,
+    '위 내용을 참고해 이어서 작업해 주세요.'
+  ].join('\n\n')
+}
+
+// 백업 파일은 결과를 이슈 안에 넣어 한 파일로 끝낸다. 예전 백업(결과가 이슈 안에 있던 형식)도 그대로 읽힌다.
+export function buildBackup(projects: Project[], results: Record<string, string>, now: Date) {
+  return JSON.stringify(
+    {
+      version: 2,
+      exportedAt: now.toISOString(),
+      projects: projects.map((p) => ({
+        ...p,
+        issues: p.issues.map((i) => {
+          const result = results[resultKey(i)]
+          return result ? { ...i, result } : i
+        })
+      }))
+    },
+    null,
+    2
+  )
+}
+
+export function parseBackup(text: string) {
+  const list = JSON.parse(text)?.projects
+  if (!Array.isArray(list) || !list.every((p) => p && typeof p.key === 'string' && typeof p.name === 'string' && Array.isArray(p.issues))) {
+    throw new Error('이 플러그인의 백업 파일이 아닙니다.')
+  }
+  const results: Record<string, string> = {}
+  const projects = (list as Project[]).map((p) => ({
+    ...p,
+    issues: p.issues.map(({ result, ...issue }) => {
+      if (result) results[resultKey(issue)] = result.slice(0, RESULT_MAX)
+      return issue
+    })
+  }))
+  return { projects, results }
 }
