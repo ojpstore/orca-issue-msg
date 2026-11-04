@@ -1,0 +1,28 @@
+{
+  "manifestVersion": 2,
+  "id": "issue-tracker",
+  "name": "Issues",
+  "version": "0.1.0",
+  "description": "Linear처럼 프로젝트를 만들고 이슈를 관리하는 사이드바 패널.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "capabilities": [
+    {
+      "kind": "storage:own"
+    }
+  ],
+  "contributes": {
+    "panels": [
+      {
+        "id": "issues",
+        "title": "Issues",
+        "icon": "bug",
+        "entry": "src/panel.html"
+      }
+    ]
+  }
+}

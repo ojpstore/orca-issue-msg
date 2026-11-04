@@ -1,0 +1,315 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        font: 13px system-ui, sans-serif;
+        color: var(--orca-foreground);
+        background: var(--orca-background);
+      }
+      h2 {
+        margin: 0;
+        font-size: 15px;
+      }
+      h3 {
+        margin: 0;
+        font-size: 13px;
+      }
+      hr {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        border-top: 1px solid var(--orca-border);
+      }
+      form,
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .row.end {
+        align-items: end;
+      }
+      .grow {
+        flex: 1;
+        min-width: 0;
+      }
+      label,
+      fieldset {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font-weight: 600;
+      }
+      legend {
+        padding: 0;
+        margin-bottom: 4px;
+      }
+      label.radio {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        font-weight: 400;
+      }
+      input:not([type='radio']),
+      textarea,
+      select {
+        width: 100%;
+        padding: 7px 10px;
+        font: inherit;
+        font-weight: 400;
+        color: inherit;
+        background: var(--orca-card);
+        border: 1px solid var(--orca-input);
+        border-radius: var(--orca-radius);
+      }
+      select option {
+        color: var(--orca-popover-foreground);
+        background: var(--orca-popover);
+      }
+      textarea {
+        resize: vertical;
+      }
+      button {
+        padding: 6px 12px;
+        font: inherit;
+        font-weight: 600;
+        color: inherit;
+        white-space: nowrap;
+        cursor: pointer;
+        background: transparent;
+        border: 1px solid var(--orca-border);
+        border-radius: var(--orca-radius);
+      }
+      button:hover:not(:disabled) {
+        background: var(--orca-accent);
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.5;
+      }
+      button.primary {
+        color: var(--orca-primary-foreground);
+        background: var(--orca-primary);
+        border-color: var(--orca-primary);
+      }
+      button.primary:hover:not(:disabled) {
+        background: var(--orca-primary);
+        opacity: 0.9;
+      }
+      button.ghost {
+        border-color: transparent;
+      }
+      button.danger {
+        align-self: flex-start;
+        color: var(--orca-destructive);
+        border-color: var(--orca-destructive);
+      }
+      button.danger.solid {
+        color: var(--orca-destructive-foreground);
+        background: var(--orca-destructive);
+      }
+      button.danger.solid:hover:not(:disabled) {
+        background: var(--orca-destructive);
+        opacity: 0.9;
+      }
+      button.icon {
+        padding: 4px 8px;
+      }
+      :focus-visible {
+        outline: 2px solid var(--orca-ring);
+        outline-offset: 1px;
+      }
+      .muted {
+        font-size: 12px;
+        color: var(--orca-muted-foreground);
+      }
+      .error {
+        font-size: 12px;
+        color: var(--orca-destructive);
+      }
+      .empty {
+        padding: 24px 0;
+        text-align: center;
+      }
+      .badge {
+        padding: 0 6px;
+        font-size: 11px;
+        background: var(--orca-card);
+        border-radius: 999px;
+      }
+      .group-header {
+        padding: 6px 10px;
+        background: var(--orca-muted);
+        border-radius: var(--orca-radius);
+      }
+      .group-body {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 6px;
+      }
+      .group-body:empty {
+        display: none;
+      }
+      .issue-card {
+        padding: 2px 6px 2px 2px;
+        background: var(--orca-background);
+        border: 1px solid var(--orca-border);
+        border-radius: 6px;
+      }
+      .issue-card:hover {
+        background: var(--orca-card);
+      }
+      .issue-open {
+        display: flex;
+        flex: 1;
+        gap: 8px;
+        align-items: baseline;
+        min-width: 0;
+        padding: 6px 8px;
+        font-weight: 400;
+        text-align: left;
+        white-space: normal;
+        border: 0;
+      }
+      .issue-open:hover:not(:disabled) {
+        background: transparent;
+      }
+      .issue-id {
+        flex: none;
+        padding: 1px 6px;
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: #9dbcff;
+        background: rgb(122 162 247 / 18%);
+        border-radius: 4px;
+      }
+      html.light .issue-id {
+        color: #2f5fd0;
+      }
+      .issue-title {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .detail-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      summary {
+        overflow-wrap: anywhere;
+        cursor: pointer;
+        list-style: none;
+      }
+      summary::-webkit-details-marker {
+        display: none;
+      }
+      summary::before {
+        content: '';
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin: 0 8px 2px 2px;
+        border-right: 1.5px solid currentColor;
+        border-bottom: 1.5px solid currentColor;
+        transform: rotate(-45deg);
+        transition: transform 0.12s;
+      }
+      details[open] > summary::before {
+        transform: rotate(45deg);
+      }
+      .description {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .thumbs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .thumbs:empty {
+        display: none;
+      }
+      .thumb {
+        position: relative;
+      }
+      .thumb img {
+        display: block;
+        width: 72px;
+        height: 72px;
+        object-fit: cover;
+        border: 1px solid var(--orca-border);
+        border-radius: var(--orca-radius);
+      }
+      .thumb span {
+        position: absolute;
+        bottom: 2px;
+        left: 2px;
+        padding: 0 4px;
+        font-size: 11px;
+        background: var(--orca-popover);
+        border-radius: 4px;
+      }
+      .thumb button {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        padding: 0 4px;
+        font-size: 11px;
+        background: var(--orca-popover);
+      }
+      .images {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .images:empty {
+        display: none;
+      }
+      .images img {
+        max-width: 100%;
+        border: 1px solid var(--orca-border);
+        border-radius: var(--orca-radius);
+      }
+      dialog {
+        width: calc(100% - 24px);
+        max-width: 420px;
+        padding: 16px;
+        color: var(--orca-popover-foreground);
+        background: var(--orca-popover);
+        border: 1px solid var(--orca-border);
+        border-radius: var(--orca-radius);
+      }
+      dialog::backdrop {
+        background: rgb(0 0 0 / 55%);
+      }
+      .between {
+        justify-content: space-between;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <dialog id="run" aria-label="작업 실행"></dialog>
+    <dialog id="project" aria-label="새 프로젝트"></dialog>
+    <dialog id="issue" aria-label="새 이슈"></dialog>
+    <dialog id="detail" aria-label="이슈 상세"></dialog>
+    <script type="module" src="./panel.ts"></script>
+  </body>
+</html>
