@@ -64,6 +64,7 @@ let defaultBackupDir = ''
 let settingsError = ''
 let savingSettings = false
 let pickingDir = false
+let settingsTab = 0
 let saveError = ''
 let projectError = ''
 let editingKey: string | null = null
@@ -1509,6 +1510,56 @@ async function saveSettings() {
 }
 
 // 복구 직전 백업은 데이터 보호용이라 자동 백업을 꺼도 남긴다.
+function backupSettings() {
+  return [
+    select(
+      '자동 백업',
+      [
+        { value: 'on', label: '켜기' },
+        { value: 'off', label: '끄기' }
+      ],
+      settingsDraft.autoBackup ? 'on' : 'off',
+      (value) => (settingsDraft.autoBackup = value === 'on')
+    ),
+    field(
+      '자동 백업 경로',
+      el(
+        'div',
+        { className: 'row' },
+        el(
+          'div',
+          { className: 'grow' },
+          el('input', {
+            value: settingsDraft.backupDir,
+            placeholder: defaultBackupDir,
+            spellcheck: false,
+            oninput: (e: any) => (settingsDraft.backupDir = e.target.value)
+          })
+        ),
+        el(
+          'button',
+          { type: 'button', disabled: pickingDir, style: 'white-space:nowrap', title: '폴더 선택 창을 엽니다', onclick: pickBackupDir },
+          pickingDir ? '선택 중…' : '찾아보기'
+        )
+      )
+    ),
+    field(
+      '자동 백업 보관 개수 (1~100)',
+      el('input', {
+        type: 'number',
+        min: 1,
+        max: 100,
+        value: settingsDraft.backupKeep,
+        oninput: (e: any) => (settingsDraft.backupKeep = e.target.value)
+      })
+    ),
+    el('div', { className: 'muted' }, '경로를 비우면 기본 경로를 씁니다. 경로를 바꿔도 기존 백업은 옮기지 않습니다. 개수를 줄이면 다음 백업 때 오래된 파일부터 지웁니다.')
+  ]
+}
+
+// 설정 탭. 항목을 늘릴 때 여기에 { label, body }를 넣는다. 저장과 취소는 모든 탭에 함께 적용된다.
+const SETTINGS_TABS = [{ label: '자동 백업', body: backupSettings }]
+
 function renderSettingsDialog() {
   settingsDialog.replaceChildren(
     el(
@@ -1520,48 +1571,26 @@ function renderSettingsDialog() {
         el('h2', {}, '설정'),
         el('button', { type: 'button', className: 'ghost icon', ariaLabel: '닫기', onclick: () => settingsDialog.close() }, '✕')
       ),
-      select(
-        '자동 백업',
-        [
-          { value: 'on', label: '켜기' },
-          { value: 'off', label: '끄기' }
-        ],
-        settingsDraft.autoBackup ? 'on' : 'off',
-        (value) => (settingsDraft.autoBackup = value === 'on')
-      ),
-      field(
-        '자동 백업 경로',
-        el(
-          'div',
-          { className: 'row' },
-          el(
-            'div',
-            { className: 'grow' },
-            el('input', {
-              value: settingsDraft.backupDir,
-              placeholder: defaultBackupDir,
-              spellcheck: false,
-              oninput: (e: any) => (settingsDraft.backupDir = e.target.value)
-            })
-          ),
+      el(
+        'div',
+        { className: 'tabs', role: 'tablist', ariaLabel: '설정 항목' },
+        ...SETTINGS_TABS.map((tab, i) =>
           el(
             'button',
-            { type: 'button', disabled: pickingDir, style: 'white-space:nowrap', title: '폴더 선택 창을 엽니다', onclick: pickBackupDir },
-            pickingDir ? '선택 중…' : '찾아보기'
+            {
+              type: 'button',
+              role: 'tab',
+              ariaSelected: String(i === settingsTab),
+              onclick: () => {
+                settingsTab = i
+                renderSettingsDialog()
+              }
+            },
+            tab.label
           )
         )
       ),
-      field(
-        '자동 백업 보관 개수 (1~100)',
-        el('input', {
-          type: 'number',
-          min: 1,
-          max: 100,
-          value: settingsDraft.backupKeep,
-          oninput: (e: any) => (settingsDraft.backupKeep = e.target.value)
-        })
-      ),
-      el('div', { className: 'muted' }, '경로를 비우면 기본 경로를 씁니다. 경로를 바꿔도 기존 백업은 옮기지 않습니다. 개수를 줄이면 다음 백업 때 오래된 파일부터 지웁니다.'),
+      el('div', { className: 'stack', role: 'tabpanel', ariaLabel: SETTINGS_TABS[settingsTab].label }, ...SETTINGS_TABS[settingsTab].body()),
       settingsError ? el('div', { className: 'error' }, settingsError) : null,
       el(
         'div',

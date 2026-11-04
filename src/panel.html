@@ -469,6 +469,30 @@
           transition: none !important;
         }
       }
+      .tabs {
+        display: flex;
+        gap: 2px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--orca-border);
+      }
+      .tabs button {
+        flex: none;
+        margin-bottom: -1px;
+        padding: 6px 10px;
+        color: var(--orca-muted-foreground);
+        background: transparent;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+      }
+      .tabs button:hover:not(:disabled) {
+        color: var(--orca-foreground);
+        background: transparent;
+      }
+      .tabs button[aria-selected='true'] {
+        color: var(--orca-foreground);
+        border-bottom-color: currentColor;
+      }
       dialog h2 {
         font-size: 15px;
       }
