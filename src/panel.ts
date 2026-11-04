@@ -54,6 +54,7 @@ let confirmingDelete = false
 let run: Run | null = null
 let detail: { key: string; number: number } | null = null
 let confirmingIssueDelete = false
+let editingTitle = false
 let collapsed = new Set<string>()
 const projectDraft = { name: '', key: '' }
 const issueDraft = {
@@ -655,6 +656,7 @@ function issueRow(project: Project, issue: Issue) {
 function openDetail(key: string, number: number) {
   detail = { key, number }
   confirmingIssueDelete = false
+  editingTitle = false
   renderDetail()
   detailDialog.showModal()
 }
@@ -698,6 +700,109 @@ function detailActions(project: Project, issue: Issue) {
   )
 }
 
+function titleView(issue: Issue) {
+  const title = el('div', { className: 'description detail-title grow' }, issue.title)
+  if (issue.status !== 'done') return title
+  return el(
+    'div',
+    { className: 'row' },
+    title,
+    el(
+      'button',
+      {
+        type: 'button',
+        className: 'ghost',
+        title: '제목 수정',
+        ariaLabel: '제목 수정',
+        onclick: () => {
+          editingTitle = true
+          renderDetail()
+        }
+      },
+      '수정'
+    )
+  )
+}
+
+function titleEditor(current: string, update: (patch: Partial<Issue>) => void) {
+  const input = el('input', { value: current, ariaLabel: '이슈 제목' }) as HTMLInputElement
+  const close = () => {
+    editingTitle = false
+    renderDetail()
+  }
+  const save = () => {
+    const title = input.value.trim()
+    if (!title) return input.focus()
+    editingTitle = false
+    update({ title })
+  }
+  input.onkeydown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') save()
+    if (e.key === 'Escape') {
+      e.preventDefault() // 다이얼로그 전체가 닫히지 않게 한다
+      close()
+    }
+  }
+  setTimeout(() => input.select())
+  return el(
+    'div',
+    { className: 'row' },
+    el('div', { className: 'grow' }, input),
+    el('button', { type: 'button', className: 'primary', onclick: save }, '저장'),
+    el('button', { type: 'button', className: 'ghost', onclick: close }, '취소')
+  )
+}
+
+const RESUME_RESULT_MAX = 1500
+
+// 새 세션에 붙여 이어서 작업할 때 쓰는 인계 문구. 복사와 재개가 같이 쓴다.
+function handoffText(project: Project, issue: Issue, maxResult = Infinity) {
+  const result = (issue.result ?? '').trim()
+  return [
+    `이전 세션에서 진행한 이슈를 이어서 작업합니다.`,
+    `## 이슈\n${issuePrompt(project, issue)}`,
+    `## 이전 에이전트 결과\n${result.length > maxResult ? `${result.slice(0, maxResult)}…(이하 생략)` : result}`,
+    `위 내용을 참고해 이어서 작업해 주세요.`
+  ].join('\n\n')
+}
+
+// ponytail: Orca CLI에 세션 재개 명령이 없어, 같은 작업 트리에서 에이전트를 새로 열고 인계 문구를 프롬프트로 넘긴다.
+function resumeButton(project: Project, issue: Issue) {
+  if (!issue.repoId || !issue.workspaceId) return null
+  const btn = el(
+    'button',
+    {
+      type: 'button',
+      title: '이슈를 진행한 작업 트리에서 에이전트를 새로 열고 이전 결과를 이어서 전달',
+      onclick: async () => {
+        btn.disabled = true
+        try {
+          // 새로 만든 작업 공간은 이미 사라졌을 수 있어(selector_not_found), 남아 있는 트리로 대신한다.
+          const trees: Tree[] = await orca.plugin.request('worktrees.list', { repoId: issue.repoId })
+          const tree = trees.find((t) => t.id === issue.workspaceId) ?? trees.find((t) => t.id === issue.worktreeId) ?? trees[0]
+          if (!tree) throw new Error('이 프로젝트에 작업 트리가 없습니다.')
+          await orca.plugin.request(
+            'issue.run',
+            {
+              ...runRequest(project, issue, issue.repoId!, issue.agent ?? AGENTS[0].value, tree.id),
+              // 재개는 토큰을 아끼려고 결과 앞부분만 넘긴다. 전체가 필요하면 복사 버튼을 쓴다.
+              prompt: handoffText(project, issue, RESUME_RESULT_MAX)
+            },
+            { timeoutMs: 120000 }
+          )
+        } catch (e) {
+          saveError = `재개 실패: ${(e as Error).message}`
+          render()
+        } finally {
+          btn.disabled = false
+        }
+      }
+    },
+    '▷ 워크트리에서 재개'
+  )
+  return btn
+}
+
 function renderDetail() {
   const project = projects.find((p) => p.key === detail?.key)
   const issue = project?.issues.find((i) => i.number === detail?.number)
@@ -722,7 +827,7 @@ function renderDetail() {
           '✕'
         )
       ),
-      el('div', { className: 'description detail-title' }, issue.title),
+      editingTitle && issue.status === 'done' ? titleEditor(issue.title, update) : titleView(issue),
       issue.description ? el('div', { className: 'description' }, issue.description) : null,
       el(
         'div',
@@ -747,12 +852,7 @@ function renderDetail() {
                   title: '새 세션에 이어서 작업할 수 있게 이슈와 결과를 복사',
                   onclick: (e: Event) => {
                     const btn = e.currentTarget as HTMLButtonElement
-                    const text = [
-                      `이전 세션에서 진행한 이슈를 이어서 작업합니다.`,
-                      `## 이슈\n${issuePrompt(project, issue)}`,
-                      `## 이전 에이전트 결과\n${(issue.result ?? '').trim()}`,
-                      `위 내용을 참고해 이어서 작업해 주세요.`
-                    ].join('\n\n')
+                    const text = handoffText(project, issue)
                     orca.plugin
                       .request('result.copy', { text })
                       .then(() => {
@@ -784,6 +884,7 @@ function renderDetail() {
             )
           )
         : null,
+      issue.status === 'done' ? resumeButton(project, issue) : null,
       select('상태', STATUSES, issue.status, (status) => update({ status })),
       el('div', { className: 'muted' }, `${new Date(issue.createdAt).toLocaleString('ko-KR')} 생성`),
       el('hr'),
@@ -935,8 +1036,81 @@ function issueList(project: Project) {
   )
 }
 
+// 가져온 백업 파일. 사용자가 확인하기 전에는 현재 데이터를 건드리지 않는다.
+let pendingRestore: Project[] | null = null
+
+function parseBackup(text: string): Project[] {
+  const data = JSON.parse(text)
+  const list = data?.projects
+  if (!Array.isArray(list) || !list.every((p) => p && typeof p.key === 'string' && typeof p.name === 'string' && Array.isArray(p.issues))) {
+    throw new Error('이 플러그인의 백업 파일이 아닙니다.')
+  }
+  return list as Project[]
+}
+
+function importBackup() {
+  const input = el('input', { type: 'file', accept: '.json,application/json' }) as HTMLInputElement
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      pendingRestore = parseBackup(await file.text())
+      saveError = ''
+    } catch (e) {
+      pendingRestore = null
+      saveError = `가져오기 실패: ${(e as Error).message}`
+    }
+    render()
+  }
+  input.click()
+}
+
+function banners() {
+  const error = saveError ? el('div', { className: 'error' }, saveError) : null
+  if (!pendingRestore) return error
+  const issues = pendingRestore.reduce((n, p) => n + p.issues.length, 0)
+  return el(
+    'div',
+    { className: 'stack' },
+    error,
+    el('div', {}, `백업에서 프로젝트 ${pendingRestore.length}개, 이슈 ${issues}개를 복구합니다. 현재 데이터는 모두 대체됩니다.`),
+    el(
+      'div',
+      { className: 'row' },
+      el(
+        'button',
+        {
+          type: 'button',
+          className: 'primary',
+          onclick: () => {
+            projects = pendingRestore!
+            pendingRestore = null
+            selectedKey = projects[0]?.key ?? ''
+            saveSetting('selectedKey', selectedKey)
+            saveProjects()
+            render()
+          }
+        },
+        '복구 확인'
+      ),
+      el(
+        'button',
+        {
+          type: 'button',
+          className: 'ghost',
+          onclick: () => {
+            pendingRestore = null
+            render()
+          }
+        },
+        '취소'
+      )
+    )
+  )
+}
+
 function view() {
-  const banner = saveError ? el('div', { className: 'error' }, saveError) : null
+  const banner = banners()
   if (projects.length === 0) {
     return el(
       'div',
@@ -1004,7 +1178,35 @@ function view() {
   )
 }
 
+// 하단 버튼바에 들어갈 버튼. 기능을 추가할 때 여기에 { label, title, onclick }를 넣는다.
+const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
+  {
+    label: '⬇ 백업',
+    title: '프로젝트와 이슈 데이터를 JSON 파일로 저장',
+    // ponytail: 이미지 첨부 파일은 포함하지 않는다(이슈에는 파일명만 저장돼 있다). 필요하면 worker에서 묶어 보낸다.
+    onclick: () => {
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+      orca.files
+        .saveAs({
+          suggestedName: `issues-backup-${stamp}.json`,
+          mimeType: 'application/json',
+          data: JSON.stringify({ version: 1, exportedAt: d.toISOString(), projects }, null, 2)
+        })
+        .catch((e: Error) => {
+          saveError = `백업 실패: ${e.message}`
+          render()
+        })
+    }
+  },
+  { label: '⬆ 임포트', title: '백업 JSON 파일에서 프로젝트와 이슈 복구', onclick: importBackup }
+]
+
 function render() {
+  document.getElementById('bar')!.replaceChildren(
+    ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, onclick: a.onclick }, a.label))
+  )
   app.replaceChildren(view())
   renderDraftImages()
 }

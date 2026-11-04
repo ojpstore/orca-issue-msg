@@ -7,11 +7,28 @@
         box-sizing: border-box;
       }
       body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
         margin: 0;
         padding: 12px;
         font: 13px system-ui, sans-serif;
         color: var(--orca-foreground);
         background: var(--orca-background);
+      }
+      #app {
+        flex: 1;
+      }
+      /* 하단 버튼바. 버튼은 panel.ts의 BAR_ACTIONS에 추가한다. */
+      #bar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        justify-content: flex-end;
+        min-height: 40px;
+        margin-top: 12px;
+        padding-top: 8px;
+        border-top: 1px solid var(--orca-border);
       }
       h2 {
         margin: 0;
@@ -341,6 +358,7 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="bar" role="toolbar" aria-label="도구 모음"></div>
     <dialog id="run" aria-label="작업 실행"></dialog>
     <dialog id="project" aria-label="새 프로젝트"></dialog>
     <dialog id="issue" aria-label="새 이슈"></dialog>
