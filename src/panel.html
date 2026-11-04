@@ -31,6 +31,48 @@
         padding-top: 8px;
         border-top: 1px solid var(--orca-border);
       }
+      #bar .ico {
+        line-height: 1;
+      }
+      #bar .lbl {
+        margin-left: 6px;
+      }
+      /* 하단바는 360px 아래에서 아이콘만 보인다. 대화상자의 버튼 줄은 좁으면 줄바꿈한다. */
+      dialog .row {
+        flex-wrap: wrap;
+      }
+      @media (max-width: 360px) {
+        #bar .lbl {
+          display: none;
+        }
+        #bar button {
+          padding: 6px 10px;
+        }
+      }
+      @media (max-width: 260px) {
+        .issue-open {
+          flex-wrap: wrap;
+          row-gap: 2px;
+        }
+        .issue-title {
+          flex-basis: 100%;
+        }
+      }
+      @media (max-width: 300px) {
+        body {
+          padding: 8px;
+        }
+        #bar .lbl {
+          display: none;
+        }
+        #bar button {
+          padding: 6px 10px;
+        }
+        dialog {
+          width: calc(100% - 16px);
+          padding: 12px;
+        }
+      }
       h2 {
         margin: 0;
         font-size: 15px;
@@ -58,6 +100,18 @@
       }
       .row.end {
         align-items: end;
+      }
+      /* 좁은 패널: 제목은 한 줄로 두고, 모자라면 버튼 묶음이 아래로 내려간다. */
+      .row.between {
+        flex-wrap: wrap;
+        row-gap: 6px;
+      }
+      .row.between > .row {
+        flex-wrap: wrap;
+      }
+      h2,
+      h3 {
+        white-space: nowrap;
       }
       .grow {
         flex: 1;
@@ -171,6 +225,7 @@
         border-radius: 999px;
       }
       .group-header {
+        flex-wrap: wrap;
         padding: 6px 10px;
         background: var(--orca-muted);
         border-radius: var(--orca-radius);

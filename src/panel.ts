@@ -1098,7 +1098,7 @@ function issueSearch(project: Project, box: HTMLElement) {
   const input = el('input', {
     type: 'search',
     value: issueQuery,
-    placeholder: '번호, 제목, 내용, 에이전트 결과 검색',
+    placeholder: '번호·제목·내용·결과 검색',
     ariaLabel: '이슈 검색'
   }) as HTMLInputElement
   // 전체를 다시 그리면 입력란 포커스를 잃어서 목록만 바꾼다.
@@ -1430,6 +1430,12 @@ function selectBarItems() {
   ]
 }
 
+// '아이콘 글자' 형태의 라벨을 아이콘과 글자로 나눈다. 좁은 패널에서는 글자를 숨기고 아이콘만 보인다.
+function barLabel(label: string) {
+  const [icon, ...rest] = label.split(' ')
+  return [el('span', { className: 'ico' }, icon), el('span', { className: 'lbl' }, rest.join(' '))]
+}
+
 // 하단바 왼쪽에 고정하는 매뉴얼 버튼. 오른쪽 버튼들은 BAR_ACTIONS가 맡는다.
 function manualButton() {
   return el(
@@ -1437,6 +1443,7 @@ function manualButton() {
     {
       type: 'button',
       title: '이 플러그인의 사용 매뉴얼을 웹 브라우저로 엽니다',
+      ariaLabel: '매뉴얼',
       style: 'margin-right:auto',
       onclick: () =>
         orca.plugin.request('manual.open', {}).catch((e: Error) => {
@@ -1444,7 +1451,7 @@ function manualButton() {
           render()
         })
     },
-    '📖 매뉴얼'
+    ...barLabel('📖 매뉴얼')
   )
 }
 
@@ -1452,7 +1459,7 @@ function render() {
   document.getElementById('bar')!.replaceChildren(
     ...(selectMode && projects.length > 0
       ? selectBarItems()
-      : [manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, onclick: a.onclick }, a.label))])
+      : [manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, ariaLabel: a.label.split(' ').slice(1).join(' '), onclick: a.onclick }, ...barLabel(a.label)))])
   )
   app.replaceChildren(view())
   renderDraftImages()
