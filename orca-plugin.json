@@ -13,9 +13,17 @@
   "capabilities": [
     {
       "kind": "storage:own"
+    },
+    {
+      "kind": "agent:read"
     }
   ],
   "contributes": {
+    "events": [
+      {
+        "on": "agent.status.changed"
+      }
+    ],
     "panels": [
       {
         "id": "issues",

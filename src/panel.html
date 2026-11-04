@@ -294,7 +294,42 @@
         color: var(--orca-popover-foreground);
         background: var(--orca-popover);
         border: 1px solid var(--orca-border);
+        border-radius: 12px;
+        box-shadow: 0 12px 40px rgb(0 0 0 / 45%);
+      }
+      .confirm-title {
+        font-size: 15px;
+        font-weight: 600;
+        line-height: 1.4;
+      }
+      .confirm-body {
+        max-height: 40vh;
+        padding: 10px 12px;
+        overflow: auto;
+        line-height: 1.55;
+        background: var(--orca-card);
+        border: 1px solid var(--orca-border);
+        border-left: 3px solid var(--orca-primary);
         border-radius: var(--orca-radius);
+      }
+      .confirm-meta {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 4px 12px;
+        padding: 8px 0;
+        border-top: 1px solid var(--orca-border);
+      }
+      .confirm-ask {
+        padding-top: 4px;
+      }
+      .confirm-actions {
+        justify-content: flex-end;
+        padding-top: 12px;
+        border-top: 1px solid var(--orca-border);
+      }
+      .confirm-actions button {
+        min-width: 72px;
+        padding: 7px 16px;
       }
       dialog::backdrop {
         background: rgb(0 0 0 / 55%);

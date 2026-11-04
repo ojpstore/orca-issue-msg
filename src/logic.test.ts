@@ -22,8 +22,8 @@ const make = (projects: Project[], name: string, key = '') => {
 
 const withIssues = () => {
   let list = make([], '엔진', 'eng')
-  list = addIssue(list, 'ENG', { title: ' 첫 이슈 ', description: '', priority: 'none' }, 1)
-  return addIssue(list, 'ENG', { title: '긴급 이슈', description: '첫 줄\n둘째 줄', priority: 'urgent' }, 2)
+  list = addIssue(list, 'ENG', { title: ' 첫 이슈 ', description: '' }, 1)
+  return addIssue(list, 'ENG', { title: '긴급 이슈', description: '첫 줄\n둘째 줄' }, 2)
 }
 
 test('입력한 키는 대문자로 저장한다', () => {
@@ -69,7 +69,7 @@ test('할 일, 진행 중, 완료는 비어 있어도 보인다', () => {
   )
 })
 
-test('상태별로 묶고 우선순위순으로 정렬한다', () => {
+test('상태별로 묶고 최신 번호순으로 정렬한다', () => {
   const list = patchIssue(withIssues(), 'ENG', 1, { status: 'done' })
   assert.deepEqual(
     groupIssues(list[0]).map((g) => [g.label, g.issues.map((i) => i.number)]),
@@ -105,7 +105,7 @@ test('기존 트리 요청은 고른 작업 트리를 넘긴다', () => {
 })
 
 test('이슈의 이미지는 실행 요청으로 넘어가고 이전 이슈는 빈 목록이다', () => {
-  const list = addIssue(make([], '엔진', 'ENG'), 'ENG', { title: 'a', description: '', priority: 'none', images: ['x.png'] }, 1)
+  const list = addIssue(make([], '엔진', 'ENG'), 'ENG', { title: 'a', description: '', images: ['x.png'] }, 1)
   const [project] = list
   assert.deepEqual(runRequest(project, project.issues[0], 'r1', 'claude').images, ['x.png'])
   const { images, ...old } = project.issues[0]
@@ -128,13 +128,12 @@ test('이미지와 연결되지 않은 토큰 문구는 그대로 둔다', () =>
   assert.deepEqual(finalizeImages('[Image #9] 설명', []), { description: '[Image #9] 설명', images: [] })
 })
 
-test('할 일 상태의 이슈만 실행할 수 있다', () => {
+test('완료된 이슈는 실행할 수 없다', () => {
   const [project] = withIssues()
   const issue = project.issues[0]
   assert.equal(canRun(issue), true)
-  for (const status of ['in_progress', 'done']) {
-    assert.equal(canRun({ ...issue, status }), false)
-  }
+  assert.equal(canRun({ ...issue, status: 'in_progress' }), true)
+  assert.equal(canRun({ ...issue, status: 'done' }), false)
 })
 
 test('처음에는 할 일만 펼친다', () => {
@@ -165,7 +164,7 @@ test('프로젝트 수정은 빈 이름, 잘못된 키, 다른 프로젝트의 �
 
 test('프로젝트를 삭제하면 그 프로젝트의 이슈도 모두 사라지고 다른 프로젝트는 남는다', () => {
   let list = make(withIssues(), '결제', 'PAY')
-  list = addIssue(list, 'PAY', { title: '남는 이슈', description: '', priority: 'none' }, 3)
+  list = addIssue(list, 'PAY', { title: '남는 이슈', description: '' }, 3)
   const left = deleteProject(list, 'ENG')
   assert.deepEqual(
     left.map((p) => p.key),
@@ -183,6 +182,6 @@ test('이슈 삭제는 그 이슈만 지우고 번호는 다시 쓰지 않는다
     project.issues.map((i) => i.number),
     [1]
   )
-  const [next] = addIssue([project], 'ENG', { title: '새 이슈', description: '', priority: 'none' }, 3)
+  const [next] = addIssue([project], 'ENG', { title: '새 이슈', description: '' }, 3)
   assert.equal(next.issues[1].number, 3)
 })

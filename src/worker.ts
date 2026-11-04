@@ -14,6 +14,23 @@ const ORCA_CLI = join(resources, 'bin', process.platform === 'win32' ? 'orca.exe
 // worker 환경에는 APPDATA가 없는데, CLI는 이 값으로 실행 중인 Orca를 찾는다.
 const CLI_ENV = { ...process.env, APPDATA: process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming') }
 
+// Orca가 에이전트의 마지막 답변을 남기는 파일에서 해당 pane의 답변을 읽는다. 기록이 늦을 수 있어 잠깐 기다리며 재시도한다.
+// ponytail: 답변 앞 4000자만 저장한다(저장소 값 한도). 늘리려면 이슈별 키로 나눈다.
+const STATUS_FILE = join(CLI_ENV.APPDATA, 'orca', 'agent-hooks', 'last-status.json')
+const RESULT_MAX = 4000
+async function lastAnswer(paneKey: string): Promise<string | undefined> {
+  let text: string | undefined
+  for (let i = 0; i < 4; i++) {
+    await new Promise((r) => setTimeout(r, i === 0 ? 300 : 500))
+    try {
+      const entry = JSON.parse(await readFile(STATUS_FILE, 'utf8')).entries?.[paneKey]
+      text = entry?.payload?.lastAssistantMessage || text
+      if (text && entry.hookEventName !== 'SubagentStop') break
+    } catch {}
+  }
+  return text?.slice(0, RESULT_MAX)
+}
+
 function orcaCli(args: string[]): Promise<any> {
   return new Promise((resolve, reject) =>
     execFile(
@@ -103,11 +120,28 @@ export function runArgs(input: {
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
+  // 에이전트가 끝나면 작업 트리 id를 남긴다. 이슈 상태는 패널이 이 목록을 보고 바꾼다(저장은 패널만 한다).
+  orca.events.on('agent.status.changed', async (e) => {
+    if (!e.workspaceId) return
+    // 한 작업 트리에서 에이전트가 여러 개 돌 수 있어서, 에이전트(pane)별로 working을 추적한다.
+    const pane = e.paneKey
+    const working: string[] = (await orca.storage.get('working')) ?? []
+    if (e.state === 'working') {
+      if (!working.includes(pane)) await orca.storage.set('working', [...working, pane])
+      return
+    }
+    // 시작 직후에도 done이 한 번 오므로, working을 거친 뒤의 done만 완료로 본다.
+    if (e.state !== 'done' || !working.includes(pane)) return
+    await orca.storage.set('working', working.filter((p) => p !== pane))
+    // 종료 한 번에 한 줄씩 쌓는다. 같은 트리를 쓰는 이슈를 한꺼번에 완료하지 않기 위해서다.
+    const result = await lastAnswer(pane)
+    const list: unknown[] = (await orca.storage.get('completed')) ?? []
+    await orca.storage.set('completed', [...list, { workspaceId: e.workspaceId, ...(result ? { result } : {}) }])
+  })
+
   orca.panels.handle('repos.list', async () => {
     const { repos } = await orcaCli(['repo', 'list'])
-    return repos
-      .filter((r: { kind: string }) => r.kind === 'git')
-      .map((r: { id: string; displayName: string }) => ({ id: r.id, name: r.displayName }))
+    return repos.map((r: { id: string; displayName: string }) => ({ id: r.id, name: r.displayName }))
   })
 
   orca.panels.handle('worktrees.list', async ({ repoId }) => {
@@ -122,7 +156,40 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
 
   orca.panels.handle('issue.run', async ({ images, ...input }) => {
-    await orcaCli(runArgs({ ...input, prompt: promptWithImages(input.prompt, images) }))
+    // Orca가 --prompt의 첫 줄만 에이전트에 넣어서, 줄바꿈을 공백으로 펴서 보낸다.
+    const prompt = promptWithImages(input.prompt, images).replace(/\s*\r?\n\s*/g, ' ')
+    const result = await orcaCli(runArgs({ ...input, prompt }))
+    // 완료 감지에 쓸 작업 트리 id. 새 트리는 CLI 응답에서, 기존 트리는 요청에서 얻는다.
+    const workspaceId: string | undefined = input.worktreeId ?? result?.worktree?.id
+    return { ok: true as const, ...(workspaceId ? { workspaceId } : {}) }
+  })
+
+  orca.panels.handle('result.open', async ({ title, question, text }) => {
+    const escape = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+    const dir = join(homedir(), '.orca-issues', 'results')
+    await mkdir(dir, { recursive: true })
+    const file = join(dir, `${title.replace(/[^\w-]/g, '_')}.html`)
+    await writeFile(
+      file,
+      `<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${escape(title)}</title>
+<style>body{max-width:960px;margin:32px auto;padding:0 20px;font:15px/1.7 system-ui,sans-serif}h1{font-size:18px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}code{font-family:ui-monospace,Consolas,monospace;font-size:.92em}
+h2{margin:24px 0 8px;font-size:14px;opacity:.7}.q{padding:12px;background:rgb(127 127 127/15%);border-radius:6px}#out>pre:first-child{font:inherit}pre code{display:block;padding:12px;background:rgb(127 127 127/15%);border-radius:6px}
+table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 127 127/50%)}a{color:#4f8cff}</style>
+<h1>${escape(title)} 에이전트 결과</h1>
+<h2>질문</h2><pre class="q">${escape(question)}</pre>
+<h2>답변</h2><div id="out"><pre>${escape(text)}</pre></div>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>try{out.innerHTML=DOMPurify.sanitize(marked.parse(${JSON.stringify(text).replace(/</g, '\\u003c')}))}catch{}</script>`
+    )
+    const [cmd, args] =
+      process.platform === 'win32'
+        ? ['cmd', ['/c', 'start', '', file]]
+        : process.platform === 'darwin'
+          ? ['open', [file]]
+          : ['xdg-open', [file]]
+    execFile(cmd, args, { windowsHide: true }, () => {})
     return { ok: true as const }
   })
 

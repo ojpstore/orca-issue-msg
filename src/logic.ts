@@ -9,15 +9,6 @@ export const STATUSES = [
 // 처음에는 할 일만 펼친다.
 export const DEFAULT_COLLAPSED = STATUSES.filter((s) => s.value !== 'todo').map((s) => s.label)
 
-// 정렬 순서이기도 하다: 위에 있을수록 먼저 표시된다.
-export const PRIORITIES = [
-  { value: 'urgent', label: '긴급' },
-  { value: 'high', label: '높음' },
-  { value: 'medium', label: '보통' },
-  { value: 'low', label: '낮음' },
-  { value: 'none', label: '우선순위 없음' }
-]
-
 // ponytail: Orca에 에이전트 목록 API가 없어서 고정 목록을 쓴다. 생기면 그 API로 바꾼다.
 export const AGENTS = [
   { value: 'claude', label: 'Claude' },
@@ -32,9 +23,15 @@ export type Issue = {
   title: string
   description: string
   status: string
-  priority: string
   createdAt: number
   images?: string[]
+  repoId?: string
+  agent?: string
+  mode?: 'new' | 'existing'
+  worktreeId?: string
+  workspaceId?: string
+  startedAt?: number
+  result?: string
 }
 
 export type Project = {
@@ -87,7 +84,15 @@ export const deleteProject = (projects: Project[], key: string) =>
 export function addIssue(
   projects: Project[],
   key: string,
-  fields: { title: string; description: string; priority: string; images?: string[] },
+  fields: {
+    title: string
+    description: string
+    images?: string[]
+    repoId?: string
+    agent?: string
+    mode?: 'new' | 'existing'
+    worktreeId?: string
+  },
   now: number
 ) {
   return projects.map((p) =>
@@ -101,9 +106,12 @@ export function addIssue(
               title: fields.title.trim(),
               description: fields.description.trim(),
               status: 'todo',
-              priority: fields.priority,
               createdAt: now,
               images: fields.images ?? [],
+              repoId: fields.repoId,
+              agent: fields.agent,
+              mode: fields.mode,
+              worktreeId: fields.mode === 'existing' ? fields.worktreeId : undefined,
               number: p.nextNumber
             }
           ]
@@ -127,20 +135,16 @@ export function deleteIssue(projects: Project[], key: string, number: number) {
   )
 }
 
-const priorityRank = (issue: Issue) => PRIORITIES.findIndex((p) => p.value === issue.priority)
-
-export const priorityLabel = (issue: Issue) => PRIORITIES[priorityRank(issue)]?.label ?? ''
-
 export function groupIssues(project: Project) {
   return STATUSES.map(({ value, label }) => ({
     label,
     issues: project.issues
       .filter((i) => i.status === value)
-      .sort((a, b) => priorityRank(a) - priorityRank(b) || b.number - a.number)
+      .sort((a, b) => b.number - a.number)
   }))
 }
 
-export const canRun = (issue: Issue) => issue.status === 'todo'
+export const canRun = (issue: Issue) => issue.status !== 'done'
 
 export const imageToken = (n: number) => `[Image #${n}]`
 
