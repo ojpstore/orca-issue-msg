@@ -988,20 +988,45 @@ function renderBatch() {
   )
 }
 
+let issueQuery = ''
+
+function issueSearch(project: Project, box: HTMLElement) {
+  const input = el('input', {
+    type: 'search',
+    value: issueQuery,
+    placeholder: '번호, 제목, 내용, 에이전트 결과 검색',
+    ariaLabel: '이슈 검색'
+  }) as HTMLInputElement
+  // 전체를 다시 그리면 입력란 포커스를 잃어서 목록만 바꾼다.
+  input.oninput = () => {
+    issueQuery = input.value
+    box.replaceChildren(issueList(project))
+  }
+  return input
+}
+
 function issueList(project: Project) {
   if (project.issues.length === 0) {
     return el('div', { className: 'empty muted' }, '이슈가 없습니다. 새 이슈 버튼으로 등록하세요.')
   }
+  // 검색 중에는 일치하는 이슈가 있는 그룹만 펼쳐 보여준다.
+  const query = issueQuery.trim().toLowerCase()
+  const matches = (i: Issue) =>
+    `${issueId(project, i)} ${i.title} ${i.description} ${i.result ?? ''}`.toLowerCase().includes(query)
+  const groups = groupIssues(project)
+    .map((g) => ({ ...g, issues: query ? g.issues.filter(matches) : g.issues }))
+    .filter((g) => !query || g.issues.length > 0)
+  if (groups.length === 0) return el('div', { className: 'empty muted' }, '검색 결과가 없습니다.')
   return el(
     'div',
     { className: 'stack' },
-    ...groupIssues(project).map((group) =>
+    ...groups.map((group) =>
       el(
         'details',
         {
-          open: !collapsed.has(group.label),
+          open: query ? true : !collapsed.has(group.label),
           ontoggle: (e: any) => {
-            if (e.target.open !== collapsed.has(group.label)) return
+            if (query || e.target.open !== collapsed.has(group.label)) return
             if (e.target.open) collapsed.delete(group.label)
             else collapsed.add(group.label)
             saveSetting('collapsed', [...collapsed])
@@ -1121,6 +1146,7 @@ function view() {
     )
   }
   const project = projects.find((p) => p.key === selectedKey) ?? projects[0]
+  const listBox = el('div', {}, issueList(project))
   return el(
     'div',
     { className: 'stack' },
@@ -1152,6 +1178,7 @@ function view() {
       project.key,
       (key) => {
         selectedKey = key
+        issueQuery = ''
         saveSetting('selectedKey', key)
         render()
       }
@@ -1174,7 +1201,8 @@ function view() {
         '+ 새 이슈'
       )
     ),
-    issueList(project)
+    project.issues.length > 0 ? issueSearch(project, listBox) : null,
+    listBox
   )
 }
 
