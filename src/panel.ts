@@ -867,17 +867,17 @@ function renderRun() {
         'fieldset',
         {},
         el('legend', {}, '실행 방식'),
-        radio(current, 'new', '새 트리로 실행'),
-        radio(current, 'existing', '기존 트리로 실행')
+        radio(current, 'new', '새 워크스페이스로 실행'),
+        radio(current, 'existing', '기존 워크스페이스로 실행')
       ),
       existing
         ? select(
-            '작업 트리',
+            '워크스페이스',
             (trees ?? []).map((t) => ({ value: t.id, label: t.name })),
             current.worktreeId,
             (id) => (current.worktreeId = id),
             busy,
-            trees ? '이 프로젝트에 작업 트리 없음' : '불러오는 중'
+            trees ? '이 프로젝트에 워크스페이스 없음' : '불러오는 중'
           )
         : null,
       current.error ? el('div', { className: 'error' }, current.error) : null,
@@ -892,7 +892,7 @@ function renderRun() {
             disabled: busy || !current.repoId || (existing && !current.worktreeId),
             onclick: () => startRun(current)
           },
-          busy ? '실행 중' : existing ? '기존 트리에서 실행' : '작업 트리 만들기'
+          busy ? '실행 중' : existing ? '기존 워크스페이스에서 실행' : '워크스페이스 만들기'
         ),
         // 실행은 되돌릴 수 없어서, 실행 중에는 '닫기'로 표시한다. 닫아도 실행은 계속된다.
         el('button', { type: 'button', className: 'ghost', onclick: closeRun }, busy ? '닫기' : '취소')
