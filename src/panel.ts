@@ -4,6 +4,7 @@ import {
   canRun,
   createProject,
   DEFAULT_COLLAPSED,
+  deleteIssue,
   deleteProject,
   finalizeImages,
   groupIssues,
@@ -52,6 +53,7 @@ let editingKey: string | null = null
 let confirmingDelete = false
 let run: Run | null = null
 let detail: { key: string; number: number } | null = null
+let confirmingIssueDelete = false
 let collapsed = new Set<string>()
 const projectDraft = { name: '', key: '' }
 const issueDraft = {
@@ -531,8 +533,48 @@ function issueRow(project: Project, issue: Issue) {
 
 function openDetail(key: string, number: number) {
   detail = { key, number }
+  confirmingIssueDelete = false
   renderDetail()
   detailDialog.showModal()
+}
+
+function removeIssue(key: string, number: number) {
+  projects = deleteIssue(projects, key, number)
+  detail = null
+  saveProjects()
+  detailDialog.close()
+  render()
+}
+
+function detailActions(project: Project, issue: Issue) {
+  const setConfirming = (value: boolean) => () => {
+    confirmingIssueDelete = value
+    renderDetail()
+  }
+  if (!confirmingIssueDelete) {
+    return el(
+      'div',
+      { className: 'row' },
+      el('button', { type: 'button', className: 'danger', onclick: setConfirming(true) }, '이슈 삭제'),
+      el('button', { type: 'button', className: 'ghost', onclick: () => detailDialog.close() }, '취소')
+    )
+  }
+  return el(
+    'div',
+    { className: 'stack' },
+    el('div', {}, `${issueId(project, issue)} 이슈를 삭제하시겠습니까?`),
+    el('div', { className: 'error' }, '되돌릴 수 없습니다.'),
+    el(
+      'div',
+      { className: 'row' },
+      el(
+        'button',
+        { type: 'button', className: 'danger solid', onclick: () => removeIssue(project.key, issue.number) },
+        '삭제 확인'
+      ),
+      el('button', { type: 'button', className: 'ghost', onclick: setConfirming(false) }, '삭제 취소')
+    )
+  )
 }
 
 function renderDetail() {
@@ -571,7 +613,9 @@ function renderDetail() {
       ),
       select('상태', STATUSES, issue.status, (status) => update({ status })),
       select('우선순위', PRIORITIES, issue.priority, (priority) => update({ priority })),
-      el('div', { className: 'muted' }, `${new Date(issue.createdAt).toLocaleString('ko-KR')} 생성`)
+      el('div', { className: 'muted' }, `${new Date(issue.createdAt).toLocaleString('ko-KR')} 생성`),
+      el('hr'),
+      detailActions(project, issue)
     )
   )
 }

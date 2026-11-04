@@ -4,6 +4,7 @@ import {
   canRun,
   createProject,
   DEFAULT_COLLAPSED,
+  deleteIssue,
   deleteProject,
   finalizeImages,
   groupIssues,
@@ -174,4 +175,14 @@ test('프로젝트를 삭제하면 그 프로젝트의 이슈도 모두 사라�
     left.flatMap((p) => p.issues.map((i) => i.title)),
     ['남는 이슈']
   )
+})
+
+test('이슈 삭제는 그 이슈만 지우고 번호는 다시 쓰지 않는다', () => {
+  const [project] = deleteIssue(withIssues(), 'ENG', 2)
+  assert.deepEqual(
+    project.issues.map((i) => i.number),
+    [1]
+  )
+  const [next] = addIssue([project], 'ENG', { title: '새 이슈', description: '', priority: 'none' }, 3)
+  assert.equal(next.issues[1].number, 3)
 })

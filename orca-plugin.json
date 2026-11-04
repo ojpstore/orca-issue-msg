@@ -20,7 +20,7 @@
       {
         "id": "issues",
         "title": "Issues",
-        "icon": "bug",
+        "icon": "flag",
         "entry": "src/panel.html"
       }
     ]

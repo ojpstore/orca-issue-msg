@@ -120,6 +120,13 @@ export function patchIssue(projects: Project[], key: string, number: number, pat
   )
 }
 
+// nextNumber는 줄이지 않는다. 지운 이슈의 번호를 다시 쓰면 작업 트리 이름과 겹친다.
+export function deleteIssue(projects: Project[], key: string, number: number) {
+  return projects.map((p) =>
+    p.key === key ? { ...p, issues: p.issues.filter((i) => i.number !== number) } : p
+  )
+}
+
 const priorityRank = (issue: Issue) => PRIORITIES.findIndex((p) => p.value === issue.priority)
 
 export const priorityLabel = (issue: Issue) => PRIORITIES[priorityRank(issue)]?.label ?? ''
