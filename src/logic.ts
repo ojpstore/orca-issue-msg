@@ -70,15 +70,11 @@ export function createProject(projects: Project[], rawName: string, rawKey: stri
   return { key, projects: [...projects, { key, name, nextNumber: 1, issues: [] }] }
 }
 
-// 이슈 번호는 키에서 만들어지므로 키를 바꾸면 TES-1이 NEW-1이 된다. 비워 두면 기존 키를 유지한다.
-export function updateProject(projects: Project[], oldKey: string, rawName: string, rawKey: string) {
+// 키는 이슈 번호의 일부(TES-1)라서 만든 뒤에는 바꾸지 않는다.
+export function updateProject(projects: Project[], key: string, rawName: string) {
   const name = rawName.trim()
   if (!name) return { error: '프로젝트 이름을 입력하세요.' }
-  const key = rawKey.trim().toUpperCase() || oldKey
-  const others = projects.filter((p) => p.key !== oldKey)
-  const error = key === oldKey ? undefined : keyError(others, key)
-  if (error) return { error }
-  return { key, projects: projects.map((p) => (p.key === oldKey ? { ...p, key, name } : p)) }
+  return { key, projects: projects.map((p) => (p.key === key ? { ...p, name } : p)) }
 }
 
 export const deleteProject = (projects: Project[], key: string) =>

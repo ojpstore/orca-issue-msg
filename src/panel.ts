@@ -252,7 +252,7 @@ function saveSetting(key: string, value: unknown) {
 function submitProject(e: Event) {
   e.preventDefault()
   const result = editingKey
-    ? updateProject(projects, editingKey, projectDraft.name, projectDraft.key)
+    ? updateProject(projects, editingKey, projectDraft.name)
     : createProject(projects, projectDraft.name, projectDraft.key)
   if (result.error) {
     projectError = result.error
@@ -377,7 +377,8 @@ function projectForm(cancellable: boolean) {
       el('input', {
         value: projectDraft.key,
         maxLength: 5,
-        placeholder: editingKey ? '비워 두면 유지' : '비워 두면 자동 생성',
+        readOnly: !!editingKey,
+        placeholder: '비워 두면 자동 생성',
         oninput: (e: any) => (projectDraft.key = e.target.value)
       })
     ),

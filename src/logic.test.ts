@@ -141,26 +141,18 @@ test('처음에는 할 일만 펼친다', () => {
   assert.deepEqual(DEFAULT_COLLAPSED, ['진행 중', '완료'])
 })
 
-test('프로젝트 수정은 이름과 키를 바꾸고 이슈를 유지한다', () => {
-  const result = updateProject(withIssues(), 'ENG', ' 새 이름 ', 'new')
+test('프로젝트 수정은 이름만 바꾸고 키와 이슈를 유지한다', () => {
+  const result = updateProject(withIssues(), 'ENG', ' 새 이름 ')
   const [project] = result.projects as Project[]
-  assert.equal(result.key, 'NEW')
+  assert.equal(result.key, 'ENG')
   assert.equal(project.name, '새 이름')
-  assert.equal(project.key, 'NEW')
+  assert.equal(project.key, 'ENG')
   assert.equal(project.nextNumber, 3)
   assert.equal(project.issues.length, 2)
 })
 
-test('키를 비우거나 그대로 두면 기존 키를 유지한다', () => {
-  assert.equal(updateProject(withIssues(), 'ENG', '이름', '').key, 'ENG')
-  assert.equal(updateProject(withIssues(), 'ENG', '이름', 'ENG').key, 'ENG')
-})
-
-test('프로젝트 수정은 빈 이름, 잘못된 키, 다른 프로젝트의 키를 거부한다', () => {
-  const list = make(withIssues(), '결제', 'PAY')
-  assert.ok(updateProject(list, 'ENG', ' ', '').error)
-  assert.ok(updateProject(list, 'ENG', '이름', '1').error)
-  assert.ok(updateProject(list, 'ENG', '이름', 'PAY').error)
+test('프로젝트 수정은 빈 이름을 거부한다', () => {
+  assert.ok(updateProject(withIssues(), 'ENG', ' ').error)
 })
 
 test('프로젝트를 삭제하면 그 프로젝트의 이슈도 모두 사라지고 다른 프로젝트는 남는다', () => {
