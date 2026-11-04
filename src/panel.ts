@@ -737,7 +737,37 @@ function renderDetail() {
             'div',
             { className: 'row between' },
             el('h3', {}, '에이전트 결과'),
-            el('button', { type: 'button', onclick: () =>
+            el(
+              'div',
+              { className: 'row' },
+              el(
+                'button',
+                {
+                  type: 'button',
+                  title: '새 세션에 이어서 작업할 수 있게 이슈와 결과를 복사',
+                  onclick: (e: Event) => {
+                    const btn = e.currentTarget as HTMLButtonElement
+                    const text = [
+                      `이전 세션에서 진행한 이슈를 이어서 작업합니다.`,
+                      `## 이슈\n${issuePrompt(project, issue)}`,
+                      `## 이전 에이전트 결과\n${(issue.result ?? '').trim()}`,
+                      `위 내용을 참고해 이어서 작업해 주세요.`
+                    ].join('\n\n')
+                    orca.plugin
+                      .request('result.copy', { text })
+                      .then(() => {
+                        btn.textContent = '복사됨'
+                        setTimeout(() => (btn.textContent = '복사'), 1500)
+                      })
+                      .catch((err: Error) => {
+                        saveError = `복사 실패: ${err.message}`
+                        render()
+                      })
+                  }
+                },
+                '복사'
+              ),
+              el('button', { type: 'button', onclick: () =>
                   orca.plugin
                     .request('result.open', {
                       title: issueId(project, issue),
@@ -750,6 +780,7 @@ function renderDetail() {
                     })
               },
               '보기'
+            )
             )
           )
         : null,
@@ -922,38 +953,40 @@ function view() {
     banner,
     el(
       'div',
-      { className: 'row end' },
+      { className: 'row between' },
+      el('h2', {}, '📁 프로젝트'),
       el(
         'div',
-        { className: 'grow' },
-        select(
-          '프로젝트',
-          projects.map((p) => ({ value: p.key, label: `${p.name} (${p.key})` })),
-          project.key,
-          (key) => {
-            selectedKey = key
-            saveSetting('selectedKey', key)
-            render()
-          }
-        )
-      ),
-      el(
-        'button',
-        {
-          type: 'button',
-          title: '프로젝트 수정',
-          ariaLabel: '프로젝트 수정',
-          onclick: () => openProjectDialog(project)
-        },
-        '수정'
-      ),
-      el('button', { type: 'button', onclick: () => openProjectDialog(null) }, '+ 새 프로젝트')
+        { className: 'row' },
+        el(
+          'button',
+          {
+            type: 'button',
+            className: 'ghost',
+            title: '프로젝트 수정',
+            ariaLabel: '프로젝트 수정',
+            onclick: () => openProjectDialog(project)
+          },
+          '수정'
+        ),
+        el('button', { type: 'button', onclick: () => openProjectDialog(null) }, '+ 새 프로젝트')
+      )
+    ),
+    select(
+      '',
+      projects.map((p) => ({ value: p.key, label: `${p.name} (${p.key})` })),
+      project.key,
+      (key) => {
+        selectedKey = key
+        saveSetting('selectedKey', key)
+        render()
+      }
     ),
     el('hr'),
     el(
       'div',
       { className: 'row between' },
-      el('h2', {}, '이슈'),
+      el('h2', {}, '📋 이슈'),
       el(
         'button',
         {

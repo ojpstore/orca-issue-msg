@@ -193,6 +193,20 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
     return { ok: true as const }
   })
 
+  // 패널 iframe은 클립보드 쓰기가 막혀 있어서(navigator.clipboard 거부, execCommand는 무반응) worker가 OS 명령으로 복사한다.
+  orca.panels.handle('result.copy', ({ text }) => {
+    const [cmd, args] =
+      process.platform === 'win32'
+        ? ['powershell', ['-NoProfile', '-Command', '[Console]::InputEncoding=[Text.Encoding]::UTF8; [Console]::In.ReadToEnd() | Set-Clipboard']]
+        : process.platform === 'darwin'
+          ? ['pbcopy', []]
+          : ['xclip', ['-selection', 'clipboard']]
+    return new Promise<{ ok: true }>((resolve, reject) => {
+      const child = execFile(cmd, args, { windowsHide: true }, (err) => (err ? reject(err) : resolve({ ok: true })))
+      child.stdin!.end(text)
+    })
+  })
+
   orca.panels.handle('image.start', async ({ type }) => {
     const name = `${randomUUID()}.${imageExtension(type)}`
     await mkdir(IMAGE_DIR, { recursive: true })
