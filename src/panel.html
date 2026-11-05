@@ -808,6 +808,94 @@
         padding-top: 2px;
       }
 
+      /* MUI Dialog 모양: 4px 모서리, elevation 24 그림자, 20px/500 제목, 오른쪽 정렬 텍스트 버튼 */
+      dialog {
+        --dlg-pad: 24px;
+        --mui-shadow: 0 11px 15px -7px rgb(0 0 0 / 20%), 0 24px 38px 3px rgb(0 0 0 / 14%),
+          0 9px 46px 8px rgb(0 0 0 / 12%);
+        border: 0;
+        border-radius: 4px;
+        box-shadow: var(--mui-shadow);
+      }
+      html.light dialog {
+        box-shadow: var(--mui-shadow);
+      }
+      dialog::backdrop,
+      html.light dialog::backdrop {
+        background: rgb(0 0 0 / 88%);
+        backdrop-filter: none;
+      }
+      dialog[open] {
+        animation: mui-grow 0.225s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      dialog[open]::backdrop {
+        animation: mui-fade 0.225s ease-out;
+      }
+      @keyframes mui-grow {
+        from {
+          opacity: 0;
+          transform: scale(0.75);
+        }
+      }
+      @keyframes mui-fade {
+        from {
+          opacity: 0;
+        }
+      }
+      dialog > .stack {
+        gap: 16px;
+        padding-bottom: 8px;
+      }
+      dialog > .stack > .row.between:first-child {
+        padding-block: 16px 0;
+        border-bottom: 0;
+      }
+      dialog h2,
+      dialog .confirm-title {
+        font-size: 20px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: 0.0075em;
+      }
+      dialog .row:has(> button.primary):not(:has(> .grow)),
+      dialog .row:has(> button.danger),
+      .confirm-actions {
+        gap: 8px;
+        margin-inline: calc(-1 * var(--dlg-pad));
+        padding: 8px 16px;
+        border-top: 0;
+      }
+      dialog > .stack > .row:last-child,
+      dialog > .stack > form:last-child > .row:last-child {
+        margin-bottom: -8px;
+      }
+      /* 버튼: 기본은 텍스트 버튼, primary만 채움(contained) */
+      dialog .row:has(> button.primary) > button,
+      dialog .row:has(> button.danger) > button,
+      .confirm-actions button {
+        min-width: 64px;
+        padding: 6px 16px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        letter-spacing: 0.02857em;
+        text-transform: uppercase;
+        border-radius: 4px;
+      }
+      dialog .row:has(> button.primary) > button:not(.primary, .danger),
+      .confirm-actions button:not(.primary, .danger) {
+        color: var(--brand-text);
+        background: transparent;
+        border-color: transparent;
+      }
+      dialog .row:has(> button.primary) > button:not(.primary, .danger):hover:not(:disabled),
+      .confirm-actions button:not(.primary, .danger):hover:not(:disabled) {
+        background: var(--brand-soft);
+        border-color: transparent;
+      }
+      dialog button.primary {
+        box-shadow: 0 3px 1px -2px rgb(0 0 0 / 20%), 0 2px 2px 0 rgb(0 0 0 / 14%), 0 1px 5px 0 rgb(0 0 0 / 12%);
+      }
+
       /* 좁은 패널 */
       @media (max-width: 360px) {
         #bar .lbl {
