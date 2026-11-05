@@ -1041,7 +1041,13 @@ function renderDetail() {
             })
           )
         : null,
-      select('상태', STATUSES, issue.status, (status) => update({ status })),
+      select('상태', STATUSES, issue.status, (status) => {
+        projects = patchIssue(projects, project.key, issue.number, { status })
+        detail = null
+        saveProjects()
+        detailDialog.close()
+        render()
+      }),
       el('div', { className: 'muted' }, `${new Date(issue.createdAt).toLocaleString('ko-KR')} 생성`),
       runHistory(issue),
       el('hr'),
