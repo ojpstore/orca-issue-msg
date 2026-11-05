@@ -192,6 +192,20 @@ export function finalizeImages(description: string, images: { n: number; name: s
 
 export const issueId = (project: Project, issue: Issue) => `${project.key}-${issue.number}`
 
+export const SEARCH_FIELDS = [
+  { value: 'all', label: '전체' },
+  { value: 'number', label: '번호' },
+  { value: 'title', label: '제목' },
+  { value: 'description', label: '내용' },
+  { value: 'result', label: '결과' }
+]
+
+// query는 소문자로 넘긴다.
+export function issueMatches(field: string, query: string, id: string, issue: Issue, result: string) {
+  const texts: Record<string, string> = { number: id, title: issue.title, description: issue.description, result }
+  return (texts[field] ?? Object.values(texts).join(' ')).toLowerCase().includes(query)
+}
+
 export const issuePrompt = (project: Project, issue: Issue) =>
   `${issueId(project, issue)} ${issue.title}\n\n${issue.description}`.trim()
 

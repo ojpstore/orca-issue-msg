@@ -17,6 +17,7 @@ import {
   imageToken,
   isStuck,
   issueId,
+  issueMatches,
   issuePrompt,
   parseBackup,
   parseSettings,
@@ -24,6 +25,7 @@ import {
   resultKey,
   routeCompleted,
   runRequest,
+  SEARCH_FIELDS,
   setStatuses,
   STATUSES,
   updateProject,
@@ -1153,6 +1155,7 @@ function renderBatch() {
 }
 
 let issueQuery = ''
+let issueSearchField = 'all'
 
 // 여러 이슈를 골라 한꺼번에 삭제하거나 상태를 바꾸는 선택 모드.
 let selectMode = false
@@ -1171,7 +1174,7 @@ function issueSearch(project: Project, box: HTMLElement) {
   const input = el('input', {
     type: 'search',
     value: issueQuery,
-    placeholder: '번호·제목·내용·결과 검색',
+    placeholder: '이슈 검색',
     ariaLabel: '이슈 검색'
   }) as HTMLInputElement
   // 전체를 다시 그리면 입력란 포커스를 잃어서 목록만 바꾼다.
@@ -1179,7 +1182,20 @@ function issueSearch(project: Project, box: HTMLElement) {
     issueQuery = input.value
     box.replaceChildren(issueList(project))
   }
-  return input
+  const scope = el(
+    'select',
+    {
+      ariaLabel: '검색 조건',
+      style: 'width:auto;flex:none',
+      onchange: () => {
+        issueSearchField = scope.value
+        box.replaceChildren(issueList(project))
+      }
+    },
+    ...SEARCH_FIELDS.map((f) => el('option', { value: f.value }, f.label))
+  ) as HTMLSelectElement
+  scope.value = issueSearchField
+  return el('div', { className: 'row' }, scope, el('div', { className: 'grow' }, input))
 }
 
 function issueList(project: Project) {
@@ -1188,8 +1204,7 @@ function issueList(project: Project) {
   }
   // 검색 중에는 일치하는 이슈가 있는 그룹만 펼쳐 보여준다.
   const query = issueQuery.trim().toLowerCase()
-  const matches = (i: Issue) =>
-    `${issueId(project, i)} ${i.title} ${i.description} ${resultOf(i)}`.toLowerCase().includes(query)
+  const matches = (i: Issue) => issueMatches(issueSearchField, query, issueId(project, i), i, resultOf(i))
   const groups = groupIssues(project)
     .map((g) => ({ ...g, issues: query ? g.issues.filter(matches) : g.issues }))
     .filter((g) => !query || g.issues.length > 0)

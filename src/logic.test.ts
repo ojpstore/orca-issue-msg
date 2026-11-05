@@ -8,6 +8,7 @@ import {
   deleteIssues,
   handoffText,
   isBackupFile,
+  issueMatches,
   parseBackup,
   parseSettings,
   resultKey,
@@ -318,4 +319,14 @@ test('저장소가 undefined를 거부하므로 만들거나 복제한 이슈에
   for (const issue of [made.issues[0], copy.issues[2]]) {
     assert.deepEqual(issue, JSON.parse(JSON.stringify(issue)))
   }
+})
+
+test('검색은 고른 조건의 내용만 보고, 전체는 모두 본다', () => {
+  const issue = { title: '제목글', description: '내용글' } as any
+  const hit = (field: string, query: string) => issueMatches(field, query, 'ENG-1', issue, 'Result')
+  assert.ok(hit('all', 'eng-1') && hit('all', '제목') && hit('all', '내용') && hit('all', 'result'))
+  assert.ok(hit('number', 'eng-1') && !hit('number', '제목'))
+  assert.ok(hit('title', '제목') && !hit('title', '내용'))
+  assert.ok(hit('description', '내용') && !hit('description', 'result'))
+  assert.ok(hit('result', 'result') && !hit('result', 'eng-1'))
 })
