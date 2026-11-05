@@ -777,8 +777,37 @@ function issueRow(project: Project, issue: Issue) {
   )
 }
 
+// 상세 화면에서 고를 프로젝트와 작업 트리 목록. 열 때 불러 둔다.
+let detailRepos: Repo[] | null = null
+let detailTrees: Tree[] | null = null
+async function loadDetailTrees(repoId: string | undefined) {
+  detailTrees = null
+  if (!repoId) return []
+  try {
+    const trees: Tree[] = await orca.plugin.request('worktrees.list', { repoId })
+    detailTrees = trees
+    return trees
+  } catch {
+    detailTrees = []
+    return []
+  }
+}
+async function loadDetailLists(issue: Issue) {
+  detailRepos = null
+  try {
+    detailRepos = await orca.plugin.request('repos.list')
+  } catch {
+    detailRepos = []
+  }
+  if (issue.mode === 'existing') await loadDetailTrees(issue.repoId)
+  if (detail?.number === issue.number) renderDetail()
+}
+
 function openDetail(key: string, number: number) {
   detail = { key, number }
+  const opened = projects.find((p) => p.key === key)?.issues.find((i) => i.number === number)
+  detailTrees = null
+  if (opened) loadDetailLists(opened)
   confirmingIssueDelete = false
   editingTitle = false
   historyOpen = false
@@ -978,6 +1007,70 @@ function runHistory(issue: Issue) {
 
 detailDialog.addEventListener('close', flushMemo)
 
+// 등록 때 지정한 실행 정보를 실행 팝업과 같은 모양으로 보여주고, 바로 고칠 수 있게 한다.
+function registeredInfo(project: Project, issue: Issue) {
+  const save = (patch: Partial<Issue>) => {
+    const next = { ...issue, ...patch }
+    // Orca 저장소는 undefined 값을 거부해서 키를 지운다.
+    if (next.mode !== 'existing') delete next.worktreeId
+    projects = projects.map((p) =>
+      p.key === project.key ? { ...p, issues: p.issues.map((i) => (i.number === issue.number ? next : i)) } : p
+    )
+    saveProjects()
+    render()
+    renderDetail()
+  }
+  // 프로젝트나 방식이 바뀌면 그 프로젝트의 작업 트리를 불러와 기존 선택을 이어가거나 첫 트리로 맞춘다.
+  const pickTree = async (repoId: string | undefined, keep: string | undefined) => {
+    const trees = await loadDetailTrees(repoId)
+    if (detail?.number !== issue.number) return
+    save({ mode: 'existing', repoId, worktreeId: (trees.find((t) => t.id === keep) ?? trees[0])?.id })
+  }
+  const mode = issue.mode ?? 'new'
+  // 완료된 이슈는 실행 정보를 고칠 수 없다.
+  const locked = issue.status === 'done'
+  return [
+    select(
+      'Orca 프로젝트',
+      (detailRepos ?? []).map((r) => ({ value: r.id, label: r.name })),
+      issue.repoId ?? '',
+      (repoId) => (mode === 'existing' ? pickTree(repoId, undefined) : save({ repoId })),
+      locked,
+      detailRepos ? '프로젝트 없음' : '불러오는 중'
+    ),
+    mode === 'existing'
+      ? select(
+          '작업 트리',
+          (detailTrees ?? []).map((t) => ({ value: t.id, label: t.name })),
+          issue.worktreeId ?? '',
+          (worktreeId) => save({ worktreeId }),
+          locked,
+          detailTrees ? '이 프로젝트에 작업 트리 없음' : '불러오는 중'
+        )
+      : null,
+    select('에이전트', AGENTS, issue.agent ?? AGENTS[0].value, (agent) => save({ agent }), locked),
+    el(
+      'fieldset',
+      {},
+      el('legend', {}, '실행 방식'),
+      ...(['new', 'existing'] as const).map((m) =>
+        el(
+          'label',
+          { className: 'radio' },
+          el('input', {
+            type: 'radio',
+            name: 'detail-mode',
+            checked: mode === m,
+            disabled: locked,
+            onchange: () => (m === 'existing' ? pickTree(issue.repoId, issue.worktreeId) : save({ mode: 'new' }))
+          }),
+          m === 'new' ? '새 트리로 실행' : '기존 트리로 실행'
+        )
+      )
+    )
+  ]
+}
+
 function renderDetail() {
   const project = projects.find((p) => p.key === detail?.key)
   const issue = project?.issues.find((i) => i.number === detail?.number)
@@ -1080,6 +1173,7 @@ function renderDetail() {
             })
           )
         : null,
+      ...registeredInfo(project, issue),
       select('상태', STATUSES, issue.status, (status) => {
         projects = patchIssue(projects, project.key, issue.number, { status })
         detail = null
@@ -1901,14 +1995,18 @@ function renderRunConfirm(current: Run) {
           imageTag(name)
         ])
       ),
-      el(
-        'div',
-        { className: 'confirm-meta' },
-        el('span', { className: 'muted' }, 'Orca 프로젝트'),
-        el('span', {}, current.repos ? (current.repos.find((r) => r.id === current.repoId)?.name ?? '미지정') : '불러오는 중'),
-        el('span', { className: 'muted' }, '에이전트'),
-        el('span', {}, AGENTS.find((x) => x.value === lastAgent)?.label ?? lastAgent)
+      select(
+        'Orca 프로젝트',
+        (current.repos ?? []).map((r) => ({ value: r.id, label: r.name })),
+        current.repoId,
+        (id) => {
+          current.repoId = id
+          if (current.mode === 'existing') loadTrees(current)
+        },
+        false,
+        current.repos ? '프로젝트 없음' : '불러오는 중'
       ),
+      select('에이전트', AGENTS, lastAgent, (agent) => (lastAgent = agent)),
       el(
         'fieldset',
         {},
