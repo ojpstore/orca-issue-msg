@@ -349,7 +349,8 @@
         display: none;
       }
       .issue-card {
-        padding: 1px 6px 1px 2px;
+        min-height: 30px;
+        padding: 0 3px 0 2px;
         background: transparent;
         border: 1px solid var(--orca-border);
         border-radius: var(--r-md);
@@ -365,12 +366,16 @@
         gap: 8px;
         align-items: baseline;
         min-width: 0;
-        padding: 7px 8px;
+        padding: 3px 8px;
         font-weight: 400;
         text-align: left;
         white-space: normal;
         background: transparent;
         border: 0;
+      }
+      .issue-card button.icon {
+        height: 24px;
+        padding-block: 0;
       }
       .issue-open:hover:not(:disabled) {
         background: transparent;
