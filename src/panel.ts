@@ -161,8 +161,18 @@ function select(
   return field(label, control)
 }
 
+const zoomDialog = document.getElementById('zoom') as HTMLDialogElement
+zoomDialog.addEventListener('click', () => zoomDialog.close())
+
 function imageTag(name: string) {
-  const img = el('img', { alt: '첨부 이미지' })
+  const img = el('img', {
+    alt: '첨부 이미지',
+    title: '눌러서 크게 보기',
+    onclick: () => {
+      zoomDialog.replaceChildren(el('img', { src: img.src, alt: '확대한 이미지' }))
+      zoomDialog.showModal()
+    }
+  })
   const cached = imageUrls.get(name)
   if (cached) {
     img.src = cached
@@ -843,7 +853,6 @@ function detailActions(project: Project, issue: Issue) {
       'div',
       { className: 'row' },
       el('button', { type: 'button', className: 'danger', onclick: setConfirming(true) }, '이슈 삭제'),
-      el('button', { type: 'button', title: '같은 제목·설명·실행 설정으로 할 일 이슈를 새로 만듭니다', onclick: () => duplicateIssue(project.key, issue.number) }, '복제'),
       el('button', { type: 'button', className: 'ghost', onclick: () => detailDialog.close() }, '취소')
     )
   }
@@ -1038,16 +1047,6 @@ function registeredInfo(project: Project, issue: Issue) {
       locked,
       detailRepos ? '프로젝트 없음' : '불러오는 중'
     ),
-    mode === 'existing'
-      ? select(
-          '작업 트리',
-          (detailTrees ?? []).map((t) => ({ value: t.id, label: t.name })),
-          issue.worktreeId ?? '',
-          (worktreeId) => save({ worktreeId }),
-          locked,
-          detailTrees ? '이 프로젝트에 작업 트리 없음' : '불러오는 중'
-        )
-      : null,
     select('에이전트', AGENTS, issue.agent ?? AGENTS[0].value, (agent) => save({ agent }), locked),
     el(
       'fieldset',
@@ -1067,7 +1066,17 @@ function registeredInfo(project: Project, issue: Issue) {
           m === 'new' ? '새 트리로 실행' : '기존 트리로 실행'
         )
       )
-    )
+    ),
+    mode === 'existing'
+      ? select(
+          '작업 트리',
+          (detailTrees ?? []).map((t) => ({ value: t.id, label: t.name })),
+          issue.worktreeId ?? '',
+          (worktreeId) => save({ worktreeId }),
+          locked,
+          detailTrees ? '이 프로젝트에 작업 트리 없음' : '불러오는 중'
+        )
+      : null
   ]
 }
 
@@ -1105,10 +1114,9 @@ function renderDetail() {
       el(
         'div',
         { className: 'images' },
-        ...(issue.images ?? []).flatMap((name, i) => [
-          el('div', { className: 'muted' }, imageToken(i + 1)),
-          imageTag(name)
-        ])
+        ...(issue.images ?? []).map((name, i) =>
+          el('figure', {}, imageTag(name), el('span', { className: 'muted' }, imageToken(i + 1)))
+        )
       ),
       issue.status === 'done' && resultOf(issue)
         ? el(
@@ -1990,10 +1998,9 @@ function renderRunConfirm(current: Run) {
       el(
         'div',
         { className: 'images' },
-        ...(issue.images ?? []).flatMap((name, i) => [
-          el('div', { className: 'muted' }, imageToken(i + 1)),
-          imageTag(name)
-        ])
+        ...(issue.images ?? []).map((name, i) =>
+          el('figure', {}, imageTag(name), el('span', { className: 'muted' }, imageToken(i + 1)))
+        )
       ),
       select(
         'Orca 프로젝트',
