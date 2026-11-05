@@ -34,6 +34,10 @@ export type Issue = {
   // 이전에는 결과를 여기에 넣었다. 지금은 따로 저장하고, 백업 파일과 옛 데이터에만 남는다.
   result?: string
   runs?: RunRecord[]
+  // 완료 이슈에 사용자가 남기는 메모. 복제에는 넘기지 않는다.
+  memo?: string
+  // 이 이슈의 에이전트가 돈 터미널 pane. 완료 뒤에 같은 세션에서 이어간 답변을 이 이슈로 모은다.
+  panes?: string[]
 }
 
 // 이슈를 실행하거나 재개한 이력. 최근 MAX_RUNS개만 남긴다.
@@ -154,7 +158,22 @@ export function groupIssues(project: Project) {
   }))
 }
 
-export const canRun = (issue: Issue) => issue.status !== 'done'
+// 할 일은 언제나, 진행 중은 에이전트가 멈췄을 때만 다시 실행할 수 있다.
+export const canRun = (issue: Issue, stuck = false) => issue.status === 'todo' || stuck
+
+// 에이전트가 터미널을 띄우고 첫 상태를 알릴 때까지는 멈춘 것으로 보지 않는다.
+export const STUCK_GRACE_MS = 120_000
+export const isStuck = (issue: Issue, active: Set<string>, now: number) =>
+  issue.status === 'in_progress' &&
+  now - (issue.startedAt ?? 0) > STUCK_GRACE_MS &&
+  !(issue.workspaceId && active.has(issue.workspaceId))
+
+// Orca에는 오류 이벤트가 없다. 터미널이 죽으면 상태 파일에 working이 남으므로 살아 있는 pane만 믿는다.
+export function findActiveWorkspaces(entries: Record<string, any>, livePanes: Set<string>) {
+  return Object.entries(entries)
+    .filter(([pane, e]) => livePanes.has(pane) && ['working', 'blocked', 'waiting'].includes(e?.payload?.state))
+    .map(([, e]) => e.worktreeId as string)
+}
 
 export const imageToken = (n: number) => `[Image #${n}]`
 
@@ -219,12 +238,34 @@ export function setStatuses(projects: Project[], key: string, numbers: number[],
 }
 
 // 새 세션에 붙여 이어서 작업할 때 쓰는 인계 문구. 복사와 재개가 같이 쓴다.
+// 재개할 때 넘기는 프롬프트의 첫 문장. 재개 세션의 답변을 덧붙일 때 이 긴 프롬프트는 요청으로 적지 않는다.
+const HANDOFF_HEAD = '이전 세션에서 진행한 이슈를 이어서 작업합니다.'
+
+// 완료 알림이 어느 이슈 것인지 찾는다. 같은 트리에서 다른 이슈가 돌고 있어도 pane이 맞는 이슈가 먼저다.
+export function routeCompleted(projects: Project[], workspaceId: string, paneKey?: string) {
+  const all = projects.flatMap((p) => p.issues.map((issue) => ({ key: p.key, issue })))
+  const owners = paneKey ? all.filter(({ issue }) => issue.panes?.includes(paneKey)) : []
+  const owner = owners.find(({ issue }) => issue.status === 'in_progress') ?? owners.find(({ issue }) => issue.status === 'done')
+  if (owner) return { ...owner, followUp: owner.issue.status === 'done' }
+  const running = all.filter(({ issue }) => issue.status === 'in_progress' && issue.workspaceId === workspaceId)
+  running.sort((a, b) => (a.issue.startedAt ?? a.issue.createdAt) - (b.issue.startedAt ?? b.issue.createdAt))
+  return running[0] ? { ...running[0], followUp: false } : null
+}
+
+// 이어서 작업한 답변을 결과 뒤에 붙인다. 한도를 넘으면 최신 내용을 남기려고 앞부분을 버린다.
+export function appendFollowUp(result: string, prompt: string, answer: string, label: string) {
+  const request = prompt && !prompt.startsWith(HANDOFF_HEAD) ? `**요청:** ${prompt}\n\n` : ''
+  const text = [result.trim(), `---\n\n### 이어서 작업 (${label})\n\n${request}${answer}`].filter(Boolean).join('\n\n')
+  const cut = '…(앞부분 생략)\n\n'
+  return text.length > RESULT_MAX ? cut + text.slice(-(RESULT_MAX - cut.length)) : text
+}
+
 export function handoffText(prompt: string, result: string, maxResult = Infinity) {
   const text = result.trim()
   return [
-    '이전 세션에서 진행한 이슈를 이어서 작업합니다.',
+    HANDOFF_HEAD,
     `## 이슈\n${prompt}`,
-    `## 이전 에이전트 결과\n${text.length > maxResult ? `${text.slice(0, maxResult)}…(이하 생략)` : text}`,
+    `## 이전 에이전트 결과\n${text.length > maxResult ? `…(앞부분 생략)${text.slice(-maxResult)}` : text}`,
     '위 내용을 참고해 이어서 작업해 주세요.'
   ].join('\n\n')
 }

@@ -1,6 +1,7 @@
 import { assert, test } from 'orca/testing'
 import {
   addIssue,
+  appendFollowUp,
   appendRun,
   buildBackup,
   cloneIssue,
@@ -10,8 +11,11 @@ import {
   parseBackup,
   parseSettings,
   resultKey,
+  routeCompleted,
   setStatuses,
   canRun,
+  findActiveWorkspaces,
+  isStuck,
   createProject,
   DEFAULT_COLLAPSED,
   deleteIssue,
@@ -142,7 +146,8 @@ test('완료된 이슈는 실행할 수 없다', () => {
   const [project] = withIssues()
   const issue = project.issues[0]
   assert.equal(canRun(issue), true)
-  assert.equal(canRun({ ...issue, status: 'in_progress' }), true)
+  assert.equal(canRun({ ...issue, status: 'in_progress' }), false)
+  assert.equal(canRun({ ...issue, status: 'in_progress' }, true), true)
   assert.equal(canRun({ ...issue, status: 'done' }), false)
 })
 
@@ -221,6 +226,57 @@ test('실행 이력은 최근 20개만 남긴다', () => {
   assert.equal(next[0].at, 1)
 })
 
+test('메모는 백업에 남고 복제에는 넘어가지 않는다', () => {
+  const project: any = { key: 'A', name: 'a', nextNumber: 2, issues: [{ number: 1, title: 't', description: '', status: 'done', createdAt: 1, memo: '주간보고' }] }
+  assert.equal(parseBackup(buildBackup([project], {}, new Date(0))).projects[0].issues[0].memo, '주간보고')
+  const cloned = cloneIssue([project], 'A', 1, 2)[0].issues.find((i: any) => i.number === 2)
+  assert.equal(cloned?.memo, undefined)
+})
+
+test('진행 중 이슈는 에이전트가 없고 유예 시간이 지나야 멈춘 것으로 본다', () => {
+  const issue: any = { status: 'in_progress', startedAt: 0, workspaceId: 'w1' }
+  assert.equal(isStuck(issue, new Set(), 200_000), true)
+  assert.equal(isStuck(issue, new Set(['w1']), 200_000), false)
+  assert.equal(isStuck(issue, new Set(), 60_000), false)
+  assert.equal(isStuck({ ...issue, status: 'todo' }, new Set(), 200_000), false)
+  assert.equal(isStuck({ ...issue, workspaceId: undefined }, new Set(['w1']), 200_000), true)
+})
+
+test('동작 중인 작업 트리는 살아 있는 pane의 상태로만 판단한다', () => {
+  const entries = {
+    a: { worktreeId: 'w1', payload: { state: 'working' } },
+    b: { worktreeId: 'w2', payload: { state: 'done' } },
+    dead: { worktreeId: 'w3', payload: { state: 'working' } },
+    c: { worktreeId: 'w4', payload: { state: 'waiting' } }
+  }
+  assert.deepEqual(findActiveWorkspaces(entries, new Set(['a', 'b', 'c'])), ['w1', 'w4'])
+})
+
+test('완료 알림은 pane이 맞는 이슈로 가고, 없으면 그 트리의 가장 먼저 시작한 진행 중 이슈로 간다', () => {
+  const issue = (number: number, status: string, extra = {}) => ({ number, title: 't', description: '', status, createdAt: number, workspaceId: 'w', ...extra })
+  const projects: any = [{ key: 'A', name: 'a', nextNumber: 9, issues: [
+    issue(1, 'done', { panes: ['p1'] }),
+    issue(2, 'in_progress', { startedAt: 20 }),
+    issue(3, 'in_progress', { startedAt: 10 })
+  ] }]
+  const follow = routeCompleted(projects, 'w', 'p1')
+  assert.equal(follow?.issue.number, 1)
+  assert.equal(follow?.followUp, true)
+  const first = routeCompleted(projects, 'w', 'new')
+  assert.equal(first?.issue.number, 3)
+  assert.equal(first?.followUp, false)
+  assert.equal(routeCompleted(projects, 'other', 'new'), null)
+})
+
+test('이어서 작업한 답변은 결과 뒤에 붙고, 재개 프롬프트는 요청으로 적지 않으며, 한도를 넘으면 앞을 버린다', () => {
+  const text = appendFollowUp('처음 결과', '더 해줘', '추가 답변', '11/5')
+  assert.ok(text.startsWith('처음 결과'))
+  assert.ok(text.includes('**요청:** 더 해줘') && text.endsWith('추가 답변'))
+  assert.ok(!appendFollowUp('r', handoffText('p', 'r'), 'a', 'l').includes('**요청:**'))
+  const long = appendFollowUp('x'.repeat(80_000), '', '최신', 'l')
+  assert.ok(long.length <= 80_000 && long.endsWith('최신') && long.startsWith('…(앞부분 생략)'))
+})
+
 test('설정은 없거나 잘못된 값을 기본값과 범위로 맞춘다', () => {
   assert.deepEqual(parseSettings(null), { autoBackup: true, backupKeep: 10, backupDir: '' })
   assert.deepEqual(parseSettings({ autoBackup: false, backupKeep: '3', backupDir: ' D:/b ' }), { autoBackup: false, backupKeep: 3, backupDir: 'D:/b' })
@@ -252,7 +308,7 @@ test('예전 형식 백업(결과가 이슈 안에 있는 파일)도 읽는다',
 })
 
 test('인계 문구는 결과를 최대 길이에서 자른다', () => {
-  assert.ok(handoffText('ENG-1 제목', 'x'.repeat(10), 4).includes('xxxx…(이하 생략)'))
+  assert.ok(handoffText('ENG-1 제목', 'abcdefgh', 4).includes('…(앞부분 생략)efgh'))
   assert.ok(handoffText('ENG-1 제목', '짧은 결과').includes('짧은 결과'))
 })
 

@@ -6,7 +6,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { buildBackup, handoffText, isBackupFile, parseSettings, RESULT_MAX, type Project } from './logic'
+import { buildBackup, findActiveWorkspaces, handoffText, isBackupFile, parseSettings, RESULT_MAX, type Project } from './logic'
 
 // worker에서 그냥 'orca'를 부르면 Windows는 앱 본체(Orca.exe)를 찾아 실행한다. 함께 설치된 CLI를 지정한다.
 // 셸을 거치지 않으므로 orca.cmd처럼 프롬프트의 줄바꿈이 망가지지 않는다.
@@ -18,18 +18,22 @@ const CLI_ENV = { ...process.env, APPDATA: process.env.APPDATA ?? join(homedir()
 
 // Orca가 에이전트의 마지막 답변을 남기는 파일에서 해당 pane의 답변을 읽는다. 기록이 늦을 수 있어 잠깐 기다리며 재시도한다.
 const STATUS_FILE = join(CLI_ENV.APPDATA, 'orca', 'agent-hooks', 'last-status.json')
-async function lastAnswer(paneKey: string): Promise<string | undefined> {
+async function lastAnswer(paneKey: string): Promise<{ text?: string; prompt?: string }> {
   let text: string | undefined
+  let prompt: string | undefined
   for (let i = 0; i < 4; i++) {
     await new Promise((r) => setTimeout(r, i === 0 ? 300 : 500))
     try {
       const entry = JSON.parse(await readFile(STATUS_FILE, 'utf8')).entries?.[paneKey]
       text = entry?.payload?.lastAssistantMessage || text
+      prompt = entry?.payload?.prompt || prompt
       if (text && entry.hookEventName !== 'SubagentStop') break
     } catch {}
   }
-  return text?.slice(0, RESULT_MAX)
+  return { text: text?.slice(0, RESULT_MAX), prompt: prompt?.slice(0, 2000) }
 }
+
+const paneKeyOf = (t: { tabId: string; leafId: string }) => `${t.tabId}:${t.leafId}`
 
 function orcaCli(args: string[]): Promise<any> {
   return new Promise((resolve, reject) =>
@@ -146,14 +150,14 @@ export default function activate(orca: OrcaWorkerApi): void {
     await orca.storage.set('working', working.filter((p) => p !== pane))
     // 종료 한 번에 한 줄씩 쌓는다. 같은 트리를 쓰는 이슈를 한꺼번에 완료하지 않기 위해서다.
     // 결과는 값 하나 한도(256KiB) 때문에 따로 저장하고, 목록에는 그 키만 남긴다. 패널이 이슈 키로 옮긴다.
-    const result = await lastAnswer(pane)
+    const { text: result, prompt } = await lastAnswer(pane)
     let resultKey: string | undefined
     if (result) {
       resultKey = `pending:${randomUUID()}`
       await orca.storage.set(resultKey, result)
     }
     const list: unknown[] = (await orca.storage.get('completed')) ?? []
-    await orca.storage.set('completed', [...list, { workspaceId: e.workspaceId, ...(resultKey ? { resultKey } : {}) }])
+    await orca.storage.set('completed', [...list, { workspaceId: e.workspaceId, paneKey: pane, ...(prompt ? { prompt } : {}), ...(resultKey ? { resultKey } : {}) }])
   })
 
   orca.panels.handle('repos.list', async () => {
@@ -178,7 +182,11 @@ export default function activate(orca: OrcaWorkerApi): void {
     const result = await orcaCli(runArgs({ ...input, prompt }))
     // 완료 감지에 쓸 작업 트리 id. 새 트리는 CLI 응답에서, 기존 트리는 요청에서 얻는다.
     const workspaceId: string | undefined = input.worktreeId ?? result?.worktree?.id
-    return { ok: true as const, ...(workspaceId ? { workspaceId } : {}) }
+    // 재개는 새 터미널에서 돌아서, 그 답변을 이슈로 모으려면 pane을 알아야 한다. 못 찾아도 실행은 이미 됐다.
+    const handle: string | undefined = result?.outcome?.handle
+    const terminals = handle ? ((await orcaCli(['terminal', 'list', '--limit', '1000']).catch(() => null))?.terminals ?? []) : []
+    const terminal = terminals.find((t: { handle: string }) => t.handle === handle)
+    return { ok: true as const, ...(workspaceId ? { workspaceId } : {}), ...(terminal ? { paneKey: paneKeyOf(terminal) } : {}) }
   })
 
   orca.panels.handle('result.open', async ({ title, question, key }) => {
@@ -253,6 +261,15 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
       await rm(join(dir, old), { force: true })
     }
     return { file }
+  })
+
+  orca.panels.handle('agents.active', async () => {
+    const [status, { terminals }] = await Promise.all([
+      readFile(STATUS_FILE, 'utf8').then(JSON.parse),
+      orcaCli(['terminal', 'list', '--limit', '1000'])
+    ])
+    const live = new Set<string>(terminals.filter((t: any) => t.connected).map(paneKeyOf))
+    return { active: findActiveWorkspaces(status.entries ?? {}, live) }
   })
 
   orca.panels.handle('backup.defaultDir', async () => ({ dir: DEFAULT_BACKUP_DIR }))

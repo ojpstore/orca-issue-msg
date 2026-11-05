@@ -1,6 +1,7 @@
 import {
   addIssue,
   AGENTS,
+  appendFollowUp,
   appendRun,
   buildBackup,
   canRun,
@@ -14,12 +15,14 @@ import {
   groupIssues,
   handoffText,
   imageToken,
+  isStuck,
   issueId,
   issuePrompt,
   parseBackup,
   parseSettings,
   patchIssue,
   resultKey,
+  routeCompleted,
   runRequest,
   setStatuses,
   STATUSES,
@@ -64,6 +67,9 @@ let defaultBackupDir = ''
 let settingsError = ''
 let savingSettings = false
 let pickingDir = false
+// 에이전트가 동작 중인 작업 트리. 확인하기 전(null)에는 멈춘 것으로 보지 않는다.
+let activeWorkspaces: Set<string> | null = null
+let stuckKey = ''
 let settingsTab = 0
 let saveError = ''
 let projectError = ''
@@ -330,28 +336,53 @@ function runsPatch(key: string, number: number, agent: string, kind: 'run' | 're
 
 // worker가 남긴 '끝난 작업 트리' 목록을 보고 진행 중 이슈를 완료로 옮긴다.
 async function applyCompleted() {
-  const raw: (string | { workspaceId: string; result?: string; resultKey?: string })[] = (await orca.storage.get('completed')) ?? []
-  const done = raw.map((d) => (typeof d === 'string' ? { workspaceId: d } : d) as { workspaceId: string; result?: string; resultKey?: string })
+  type Completed = { workspaceId: string; paneKey?: string; prompt?: string; result?: string; resultKey?: string }
+  const raw: (string | Completed)[] = (await orca.storage.get('completed')) ?? []
+  const done = raw.map((d) => (typeof d === 'string' ? { workspaceId: d } : d) as Completed)
   if (done.length === 0) return
   await orca.storage.set('completed', [])
-  // 종료 한 건마다, 그 트리에서 가장 먼저 시작한 진행 중 이슈 하나만 완료로 옮긴다.
+  // 종료 한 건마다 이슈 하나만 바꾼다. 완료된 이슈의 pane이면 이어서 작업한 답변이고, 아니면 진행 중 이슈를 완료로 옮긴다.
   let changed = false
-  for (const { workspaceId: id, result: inline, resultKey: pending } of done) {
+  for (const { workspaceId: id, paneKey, prompt, result: inline, resultKey: pending } of done) {
     // worker가 따로 저장해 둔 결과를 읽고, 이슈 키로 옮긴 뒤 임시 키를 지운다.
     const result: string | undefined = pending ? ((await orca.storage.get(pending)) ?? undefined) : inline
     if (pending) orca.storage.delete(pending).catch(() => {})
-    const running = projects.flatMap((p) =>
-      p.issues.filter((i) => i.status === 'in_progress' && i.workspaceId === id).map((i) => ({ key: p.key, i }))
-    )
-    running.sort((a, b) => (a.i.startedAt ?? a.i.createdAt) - (b.i.startedAt ?? b.i.createdAt))
-    const first = running[0]
-    if (!first) continue
-    projects = patchIssue(projects, first.key, first.i.number, { status: 'done' })
-    if (result) saveResult(first.i, result)
+    const target = routeCompleted(projects, id, paneKey)
+    if (!target) continue
+    const { key, issue, followUp } = target
+    if (followUp) {
+      if (result) saveResult(issue, appendFollowUp(resultOf(issue), prompt ?? '', result, new Date().toLocaleString('ko-KR')))
+      continue
+    }
+    const panes = paneKey && !issue.panes?.includes(paneKey) ? [...(issue.panes ?? []), paneKey] : issue.panes
+    projects = patchIssue(projects, key, issue.number, { status: 'done', panes })
+    if (result) saveResult(issue, result)
     changed = true
   }
   if (!changed) return
   saveProjects()
+  render()
+}
+
+// 메모는 입력할 때마다 메모리에 넣고, 저장은 입력이 멈추거나 창이 닫힐 때 한 번만 한다.
+let memoTimer: ReturnType<typeof setTimeout> | undefined
+function flushMemo() {
+  if (memoTimer === undefined) return
+  clearTimeout(memoTimer)
+  memoTimer = undefined
+  saveProjects()
+}
+
+const stuckNow = (issue: Issue) => activeWorkspaces !== null && isStuck(issue, activeWorkspaces, Date.now())
+
+// 에이전트가 죽으면 이벤트가 오지 않아서 주기적으로 확인한다. 진행 중 이슈가 없으면 아무것도 하지 않는다.
+async function refreshActive() {
+  const running = projects.flatMap((p) => p.issues.filter((i) => i.status === 'in_progress'))
+  if (running.length === 0) return
+  activeWorkspaces = new Set((await orca.plugin.request('agents.active', {})).active)
+  const key = running.filter(stuckNow).map(resultKey).join()
+  if (key === stuckKey) return
+  stuckKey = key
   render()
 }
 
@@ -722,13 +753,13 @@ function issueRow(project: Project, issue: Issue) {
       el('span', { className: 'issue-id' }, id),
       el('span', { className: 'issue-title' }, issue.title),
     ),
-    canRun(issue)
+    canRun(issue, stuckNow(issue))
       ? el(
           'button',
           {
             type: 'button',
             className: 'icon',
-            title: '작업 실행',
+            title: issue.status === 'in_progress' ? '에이전트가 동작하지 않습니다. 다시 실행합니다' : '작업 실행',
             ariaLabel: `${id} 실행`,
             onclick: () => openRun(project, issue)
           },
@@ -866,16 +897,19 @@ function resumeButton(project: Project, issue: Issue) {
           const trees: Tree[] = await orca.plugin.request('worktrees.list', { repoId: issue.repoId })
           const tree = trees.find((t) => t.id === issue.workspaceId) ?? trees.find((t) => t.id === issue.worktreeId) ?? trees[0]
           if (!tree) throw new Error('이 프로젝트에 작업 트리가 없습니다.')
-          await orca.plugin.request(
+          const started = await orca.plugin.request(
             'issue.run',
             {
               ...runRequest(project, issue, issue.repoId!, issue.agent ?? AGENTS[0].value, tree.id),
-              // 재개는 토큰을 아끼려고 결과 앞부분만 넘긴다. 전체가 필요하면 복사 버튼을 쓴다.
+              // 재개는 토큰을 아끼려고 결과의 최근 부분만 넘긴다. 전체가 필요하면 복사 버튼을 쓴다.
               prompt: handoffText(issuePrompt(project, issue), resultOf(issue), RESUME_RESULT_MAX)
             },
             { timeoutMs: 120000 }
           )
-          projects = patchIssue(projects, project.key, issue.number, runsPatch(project.key, issue.number, issue.agent ?? AGENTS[0].value, 'resume', tree.id))
+          projects = patchIssue(projects, project.key, issue.number, {
+            ...runsPatch(project.key, issue.number, issue.agent ?? AGENTS[0].value, 'resume', tree.id),
+            ...(started.paneKey ? { panes: [...(issue.panes ?? []), started.paneKey] } : {})
+          })
           saveProjects()
           render()
           renderDetail()
@@ -907,6 +941,8 @@ function runHistory(issue: Issue) {
       )
   )
 }
+
+detailDialog.addEventListener('close', flushMemo)
 
 function renderDetail() {
   const project = projects.find((p) => p.key === detail?.key)
@@ -989,6 +1025,22 @@ function renderDetail() {
           )
         : null,
       issue.status === 'done' ? resumeButton(project, issue) : null,
+      issue.status === 'done'
+        ? field(
+            '메모',
+            el('textarea', {
+              rows: 10,
+              maxLength: 8000,
+              placeholder: '이 이슈를 마치며 든 생각을 자유롭게 정리해 보세요',
+              value: issue.memo ?? '',
+              oninput: (e: any) => {
+                projects = patchIssue(projects, project.key, issue.number, { memo: e.target.value })
+                clearTimeout(memoTimer)
+                memoTimer = setTimeout(flushMemo, 500)
+              }
+            })
+          )
+        : null,
       select('상태', STATUSES, issue.status, (status) => update({ status })),
       el('div', { className: 'muted' }, `${new Date(issue.createdAt).toLocaleString('ko-KR')} 생성`),
       runHistory(issue),
@@ -1957,6 +2009,8 @@ async function boot() {
       applyPickedDir().catch(() => {})
     })
     applyCompleted().catch(() => {})
+    refreshActive().catch(() => {})
+    setInterval(() => refreshActive().catch(() => {}), 30_000)
   } catch (e) {
     // 빈 화면을 띄우면 다음 저장이 기존 데이터를 덮어쓴다. 오류만 보여주고 멈춘다.
     app.replaceChildren(el('div', { className: 'error' }, `불러오기 실패: ${(e as Error).message}`))
