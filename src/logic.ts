@@ -151,6 +151,7 @@ export function deleteIssue(projects: Project[], key: string, number: number) {
 
 export function groupIssues(project: Project) {
   return STATUSES.map(({ value, label }) => ({
+    status: value,
     label,
     issues: project.issues
       .filter((i) => i.status === value)

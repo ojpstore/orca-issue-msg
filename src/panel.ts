@@ -760,7 +760,7 @@ function issueRow(project: Project, issue: Issue) {
           'button',
           {
             type: 'button',
-            className: 'icon',
+            className: 'icon run',
             title: issue.status === 'in_progress' ? '에이전트가 동작하지 않습니다. 다시 실행합니다' : '작업 실행',
             ariaLabel: `${id} 실행`,
             onclick: () => openRun(project, issue)
@@ -891,6 +891,7 @@ function resumeButton(project: Project, issue: Issue) {
     'button',
     {
       type: 'button',
+      className: 'run',
       title: '이슈를 진행한 작업 트리에서 에이전트를 새로 열고 이전 결과를 이어서 전달',
       onclick: async () => {
         btn.disabled = true
@@ -963,7 +964,12 @@ function renderDetail() {
       el(
         'div',
         { className: 'row between' },
-        el('h2', {}, issueId(project, issue)),
+        el(
+          'div',
+          { className: 'row' },
+          el('span', { className: 'issue-id' }, issueId(project, issue)),
+          el('span', { className: `status-chip status-${issue.status}` }, STATUSES.find((s) => s.value === issue.status)?.label)
+        ),
         el(
           'button',
           { type: 'button', className: 'ghost icon', ariaLabel: '닫기', onclick: () => detailDialog.close() },
@@ -1226,7 +1232,7 @@ function issueList(project: Project) {
         },
         el(
           'summary',
-          { className: 'row group-header' },
+          { className: `row group-header status-${group.status}` },
           el('h3', {}, group.label),
           el('span', { className: 'badge' }, String(group.issues.length)),
           group.issues.some((i) => i.status === 'todo')
@@ -1234,7 +1240,7 @@ function issueList(project: Project) {
                 'button',
                 {
                   type: 'button',
-                  className: 'icon',
+                  className: 'icon run',
                   title: '할 일 전체 실행',
                   style: 'margin-left:auto',
                   onclick: (e: Event) => {
@@ -1424,6 +1430,7 @@ function view() {
         'button',
         {
           type: 'button',
+          className: 'primary',
           onclick: () => {
             renderIssueDialog(project)
             issueDialog.showModal()
