@@ -80,6 +80,7 @@ let confirmingDelete = false
 let run: Run | null = null
 let detail: { key: string; number: number } | null = null
 let confirmingIssueDelete = false
+let historyOpen = false
 let editingTitle = false
 let collapsed = new Set<string>()
 const projectDraft = { name: '', key: '' }
@@ -775,6 +776,7 @@ function openDetail(key: string, number: number) {
   detail = { key, number }
   confirmingIssueDelete = false
   editingTitle = false
+  historyOpen = false
   renderDetail()
   detailDialog.showModal()
 }
@@ -929,20 +931,44 @@ function resumeButton(project: Project, issue: Issue) {
   return btn
 }
 
+// 접었을 때 보이는 이력 수. 숨기는 규칙은 panel.html의 .run-history에 있다.
+const HISTORY_PREVIEW = 3
+
 function runHistory(issue: Issue) {
   const runs = issue.runs ?? []
   if (runs.length === 0) return null
   const label = (id: string) => AGENTS.find((a) => a.value === id)?.label ?? id
-  return el(
+  const toggleText = () => (historyOpen ? '접기' : `${runs.length - HISTORY_PREVIEW}건 더 보기`)
+  // 메모를 입력하던 내용과 커서가 유지되도록 팝업을 다시 그리지 않고 표시만 바꾼다.
+  const toggle =
+    runs.length > HISTORY_PREVIEW
+      ? el(
+          'button',
+          {
+            type: 'button',
+            className: 'ghost',
+            ariaExpanded: String(historyOpen),
+            onclick: () => {
+              historyOpen = !historyOpen
+              box.classList.toggle('open', historyOpen)
+              toggle.textContent = toggleText()
+              toggle.ariaExpanded = String(historyOpen)
+            }
+          },
+          toggleText()
+        )
+      : null
+  const box = el(
     'div',
-    { className: 'stack run-history' },
-    el('h3', {}, `실행 이력 ${runs.length}`),
+    { className: `stack run-history${historyOpen ? ' open' : ''}` },
+    el('div', { className: 'row between history-head' }, el('h3', {}, `실행 이력 ${runs.length}`), toggle),
     ...[...runs]
       .reverse()
       .map((r) =>
         el('div', { className: 'muted' }, `${new Date(r.at).toLocaleString('ko-KR')} · ${label(r.agent)} · ${r.kind === 'resume' ? '재개' : '실행'}`)
       )
   )
+  return box
 }
 
 detailDialog.addEventListener('close', flushMemo)

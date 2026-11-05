@@ -476,12 +476,37 @@
         overflow-wrap: anywhere;
         color: color-mix(in srgb, var(--orca-popover-foreground) 88%, transparent);
       }
+      /* 이력은 최근 3건만 보이고, 펼치면 5건 높이까지 보이며 나머지는 이 영역만 스크롤된다. 제목 줄은 그 안에서 고정된다. */
       .run-history {
         gap: 6px;
-        padding: 10px 12px;
+        max-height: 200px;
+        padding: 0 12px 10px;
+        overflow-y: auto;
         background: var(--surface);
         border: 1px solid var(--orca-border);
         border-radius: var(--r-md);
+      }
+      .history-head {
+        position: sticky;
+        top: 0;
+        flex: none;
+        min-height: 38px;
+        margin-inline: -12px;
+        padding: 6px 12px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--orca-border);
+      }
+      .history-head button {
+        padding: 1px 8px;
+        font-size: 12px;
+        color: var(--brand-text);
+      }
+      .run-history > .muted {
+        flex: none;
+      }
+      /* 첫 자식이 제목 줄이므로 다섯 번째 자식부터가 네 번째 이력이다. panel.ts의 HISTORY_PREVIEW와 맞춘다. */
+      .run-history:not(.open) > .muted:nth-child(n + 5) {
+        display: none;
       }
       .run-history > .muted + .muted {
         padding-top: 6px;
