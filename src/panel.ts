@@ -100,7 +100,7 @@ let draftDescription: HTMLTextAreaElement | null = null
 let imageError = ''
 let uploading = 0
 let issueRepos: Repo[] | null = null
-let issueTrees: Tree[] = []
+let issueTrees: Tree[] | null = null
 
 // Orca의 패널-worker 메시지 한도(약 48KB)보다 작은 4의 배수.
 const IMAGE_CHUNK = 40_000
@@ -554,6 +554,7 @@ function clearIssueDraft() {
 // ✕와 Esc는 작성 중인 내용을 남긴다. 실수로 닫아도 잃지 않도록, 지우는 건 취소뿐이다.
 async function loadIssueRepos(project: Project) {
   issueRepos = null
+  issueTrees = null
   try {
     issueRepos = await orca.plugin.request('repos.list')
   } catch {
@@ -567,19 +568,21 @@ async function loadIssueRepos(project: Project) {
   loadIssueTrees(project)
 }
 
-// 기존 트리 방식일 때만 불러온다. 트리가 1개면 그대로 쓰고, 2개 이상일 때만 선택 창을 보여준다.
+// 기존 트리 방식일 때만 불러온다.
 async function loadIssueTrees(project: Project) {
-  issueTrees = []
+  issueTrees = null
   issueDraft.worktreeId = ''
+  if (issueDialog.open) renderIssueDialog(project)
   const repoId = issueDraft.repoId
+  let trees: Tree[] = []
   if (issueDraft.mode === 'existing' && repoId) {
     try {
-      const trees: Tree[] = await orca.plugin.request('worktrees.list', { repoId })
-      if (issueDraft.repoId !== repoId || issueDraft.mode !== 'existing') return
-      issueTrees = trees
-      issueDraft.worktreeId = trees[0]?.id ?? ''
+      trees = await orca.plugin.request('worktrees.list', { repoId })
     } catch {}
+    if (issueDraft.repoId !== repoId || issueDraft.mode !== 'existing') return
   }
+  issueTrees = trees
+  issueDraft.worktreeId = trees[0]?.id ?? ''
   if (issueDialog.open) renderIssueDialog(project)
 }
 
@@ -686,12 +689,14 @@ function issueForm(project: Project) {
         )
       )
     ),
-    issueDraft.mode === 'existing' && issueTrees.length > 1
+    issueDraft.mode === 'existing'
       ? select(
           '작업 트리',
-          issueTrees.map((t) => ({ value: t.id, label: t.name })),
+          (issueTrees ?? []).map((t) => ({ value: t.id, label: t.name })),
           issueDraft.worktreeId,
-          (id) => (issueDraft.worktreeId = id)
+          (id) => (issueDraft.worktreeId = id),
+          false,
+          issueTrees ? '이 프로젝트에 작업 트리 없음' : '불러오는 중'
         )
       : null,
     el(
