@@ -20,7 +20,7 @@
       body {
         display: flex;
         flex-direction: column;
-        min-height: 100vh;
+        height: 100vh;
         margin: 0;
         padding: 14px 12px 10px;
         font: 13px/1.5 system-ui, 'Malgun Gothic', sans-serif;
@@ -30,6 +30,37 @@
       }
       #app {
         flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      /* 프로젝트·검색 영역은 고정하고, 이슈가 넘치는 상태 그룹에만 스크롤이 생긴다. 그룹 제목은 그 안에서 고정된다. */
+      .issue-view {
+        height: 100%;
+      }
+      .issue-scroll {
+        flex: 1;
+        min-height: 120px;
+        overflow-y: auto;
+      }
+      .issue-groups {
+        height: 100%;
+      }
+      .issue-groups > details {
+        flex: none;
+      }
+      .issue-groups > details[open] {
+        flex: 0 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      /* 낮은 패널에서도 제목과 이슈 한 줄은 보이게 한다. */
+      .issue-groups > details[open]:has(.issue-card) {
+        min-height: 84px;
+      }
+      .issue-groups > details > summary {
+        position: sticky;
+        top: 0;
+        z-index: 1;
       }
       /* 하단 버튼바. 버튼은 panel.ts의 BAR_ACTIONS에 추가한다. */
       #bar {

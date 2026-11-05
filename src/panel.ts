@@ -1211,7 +1211,7 @@ function issueList(project: Project) {
   if (groups.length === 0) return el('div', { className: 'empty muted' }, '검색 결과가 없습니다.')
   return el(
     'div',
-    { className: 'stack' },
+    { className: 'stack issue-groups' },
     ...groups.map((group) =>
       el(
         'details',
@@ -1376,10 +1376,10 @@ function view() {
     )
   }
   const project = projects.find((p) => p.key === selectedKey) ?? projects[0]
-  const listBox = el('div', {}, issueList(project))
+  const listBox = el('div', { className: 'issue-scroll' }, issueList(project))
   return el(
     'div',
-    { className: 'stack' },
+    { className: 'stack issue-view' },
     banner,
     el(
       'div',
@@ -1411,6 +1411,7 @@ function view() {
         issueQuery = ''
         exitSelectMode()
         saveSetting('selectedKey', key)
+        app.querySelectorAll('.issue-groups > details').forEach((d) => (d.scrollTop = 0))
         render()
       }
     ),
@@ -1713,7 +1714,10 @@ function render() {
       ? selectBarItems()
       : [settingsButton(), manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, ariaLabel: a.label.split(' ').slice(1).join(' '), onclick: a.onclick }, ...barLabel(a.label)))])
   )
+  // 목록을 새로 만들어도 그룹마다 보던 위치를 유지한다.
+  const tops = [...app.querySelectorAll('.issue-groups > details')].map((d) => d.scrollTop)
   app.replaceChildren(view())
+  app.querySelectorAll('.issue-groups > details').forEach((d, i) => (d.scrollTop = tops[i] ?? 0))
   renderDraftImages()
 }
 
