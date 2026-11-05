@@ -324,6 +324,21 @@
         font-size: 12px;
         font-weight: 650;
       }
+      /* 상단 조회 영역과 하단바의 컨트롤은 그룹 제목과 같은 높이로 맞춘다. */
+      .issue-view > .row button,
+      .issue-view > .row select,
+      .issue-view > .row input,
+      .issue-view > label select,
+      #bar button,
+      #bar select {
+        height: 30px;
+        padding-block: 0;
+      }
+      /* 버튼이 있어도 그룹 제목 높이는 모두 같게 둔다. */
+      .group-header button.icon {
+        padding-block: 1px;
+        margin-block: -3px;
+      }
       .group-body {
         display: flex;
         flex-direction: column;
