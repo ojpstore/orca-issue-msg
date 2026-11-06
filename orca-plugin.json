@@ -24,26 +24,6 @@
         "on": "agent.status.changed"
       }
     ],
-    "customEditors": [
-      {
-        "id": "issue-result",
-        "title": "에이전트 결과",
-        "extensions": [
-          ".issue-result"
-        ],
-        "entry": "src/result-editor.ts",
-        "frame": "isolated"
-      },
-      {
-        "id": "issue-manual",
-        "title": "Issues 매뉴얼",
-        "extensions": [
-          ".issue-manual"
-        ],
-        "entry": "docs/manual.html",
-        "frame": "isolated"
-      }
-    ],
     "panels": [
       {
         "id": "issues",

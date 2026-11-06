@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { buildBackup, findActiveWorkspaces, handoffText, isBackupFile, parseSettings, RESULT_MAX, type Project } from './logic'
 
@@ -52,18 +53,13 @@ function orcaCli(args: string[]): Promise<any> {
   )
 }
 
-// ponytail: 다운로드 폴더를 옮긴 Windows 사용자도 기본 위치를 쓴다. 필요해지면 known folder를 조회한다.
-const TAB_DIR = join(homedir(), 'Downloads', '.orca', 'issue-tabs')
-
-// 어느 워크스페이스에도 속하지 않는 파일이라 Orca가 이 폴더를 폴더 워크스페이스로 등록하고 그 화면으로 전환해서 연다.
-async function openTab(name: string, content: string) {
-  await mkdir(TAB_DIR, { recursive: true })
-  await writeFile(join(TAB_DIR, name), content)
-  // orca file open은 opened: true를 돌려주지만 custom editor 탭을 만들지 않는다(1.4.250).
-  // 플러그인 키는 설치 경로에 따라 앞부분이 달라서(local., 저장소 소유자.) 목록에서 찾는다.
-  const { plugins } = await orcaCli(['plugin', 'list'])
-  const { pluginKey } = plugins.find((p: { pluginKey: string }) => p.pluginKey.endsWith('.issue-tracker'))
-  await orcaCli(['plugin', 'open', pluginKey, '--editor', join(TAB_DIR, name)])
+// 파일로 여는 편집기 탭은 워크스페이스 밖이면 폴더 워크스페이스를 새로 등록한다. 브라우저 탭은 어떤 경로든 화면의 워크스페이스에 열린다.
+// worker의 현재 폴더는 워크스페이스가 아니라서 --worktree active를 쓸 수 없다.
+async function openBrowserTab(file: string) {
+  const { worktrees } = await orcaCli(['worktree', 'ps', '--limit', '1000'])
+  const active = worktrees.find((w: { isActive: boolean }) => w.isActive)
+  if (!active) throw new Error('열려 있는 워크스페이스가 없습니다')
+  await orcaCli(['tab', 'create', '--url', pathToFileURL(file).href, '--worktree', `id:${active.worktreeId}`])
 }
 
 const IMAGE_DIR = join(homedir(), '.orca-issues', 'images')
@@ -204,7 +200,25 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('result.open', async ({ title, question, key }) => {
     const text = ((await orca.storage.get(key)) as string | null) ?? ''
-    await openTab(`${title.replace(/[^\w-]/g, '_')}.issue-result`, JSON.stringify({ title, question, text }))
+    const escape = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+    const dir = join(homedir(), '.orca-issues', 'results')
+    await mkdir(dir, { recursive: true })
+    const file = join(dir, `${title.replace(/[^\w-]/g, '_')}.html`)
+    await writeFile(
+      file,
+      `<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${escape(title)}</title>
+<style>body{max-width:960px;margin:32px auto;padding:0 20px;font:15px/1.7 system-ui,sans-serif}h1{font-size:18px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}code{font-family:ui-monospace,Consolas,monospace;font-size:.92em}
+h2{margin:24px 0 8px;font-size:14px;opacity:.7}.q{padding:12px;background:rgb(127 127 127/15%);border-radius:6px}#out>pre:first-child{font:inherit}pre code{display:block;padding:12px;background:rgb(127 127 127/15%);border-radius:6px}
+table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 127 127/50%)}a{color:#4f8cff}</style>
+<h1>${escape(title)} 에이전트 결과</h1>
+<h2>질문</h2><pre class="q">${escape(question)}</pre>
+<h2>답변</h2><div id="out"><pre>${escape(text)}</pre></div>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>try{out.innerHTML=DOMPurify.sanitize(marked.parse(${JSON.stringify(text).replace(/</g, '\\u003c')}))}catch{}</script>`
+    )
+    await openBrowserTab(file)
     return { ok: true as const }
   })
 
@@ -290,9 +304,13 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { ok: true as const }
   })
 
-  // 화면은 custom editor의 entry인 docs/manual.html이 그리므로 파일은 탭을 여는 빈 표식이면 된다.
+  // 매뉴얼(docs/manual.html, 이미지는 docs/img)을 연다. 파일 위치는 이 worker 파일을 기준으로 찾는다.
   orca.panels.handle('manual.open', async () => {
-    await openTab('manual.issue-manual', '')
+    const file = fileURLToPath(new URL('../docs/manual.html', import.meta.url))
+    await stat(file).catch(() => {
+      throw new Error(`매뉴얼 파일을 찾을 수 없습니다: ${file}`)
+    })
+    await openBrowserTab(file)
     return { ok: true as const }
   })
 
