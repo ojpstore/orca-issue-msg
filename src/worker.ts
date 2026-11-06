@@ -52,21 +52,18 @@ function orcaCli(args: string[]): Promise<any> {
   )
 }
 
-// 편집기 탭은 워크스페이스 안의 파일만 열 수 있어서, 화면의 워크스페이스 안에 스스로를 무시하는 폴더를 두고 쓴다.
+// ponytail: 다운로드 폴더를 옮긴 Windows 사용자도 기본 위치를 쓴다. 필요해지면 known folder를 조회한다.
+const TAB_DIR = join(homedir(), 'Downloads', '.orca', 'issue-tabs')
+
+// 어느 워크스페이스에도 속하지 않는 파일이라 Orca가 이 폴더를 폴더 워크스페이스로 등록하고 그 화면으로 전환해서 연다.
 async function openTab(name: string, content: string) {
-  const { worktrees } = await orcaCli(['worktree', 'ps', '--limit', '1000'])
-  const active = worktrees.find((w: { isActive: boolean }) => w.isActive)
-  if (!active) throw new Error('열려 있는 워크스페이스가 없습니다')
-  // .orca 아래여야 한다. 플러그인 개발 폴더가 활성 워크스페이스일 때 다른 곳에 쓰면 Orca가 리로드해서 패널 팝업이 닫힌다.
-  const dir = join(active.path, '.orca', 'issue-tabs')
-  await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, '.gitignore'), '*\n')
-  await writeFile(join(dir, name), content)
+  await mkdir(TAB_DIR, { recursive: true })
+  await writeFile(join(TAB_DIR, name), content)
   // orca file open은 opened: true를 돌려주지만 custom editor 탭을 만들지 않는다(1.4.250).
   // 플러그인 키는 설치 경로에 따라 앞부분이 달라서(local., 저장소 소유자.) 목록에서 찾는다.
   const { plugins } = await orcaCli(['plugin', 'list'])
   const { pluginKey } = plugins.find((p: { pluginKey: string }) => p.pluginKey.endsWith('.issue-tracker'))
-  await orcaCli(['plugin', 'open', pluginKey, '--editor', join(dir, name)])
+  await orcaCli(['plugin', 'open', pluginKey, '--editor', join(TAB_DIR, name)])
 }
 
 const IMAGE_DIR = join(homedir(), '.orca-issues', 'images')

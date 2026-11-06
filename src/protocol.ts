@@ -22,13 +22,13 @@ declare module 'orca' {
       }
       output: { ok: true; workspaceId?: string; paneKey?: string }
     }
-    /** 저장소 key의 에이전트 결과를 .issue-result 파일로 저장해 화면의 워크스페이스에서 새 탭으로 연다. */
+    /** 저장소 key의 에이전트 결과를 .issue-result 파일로 다운로드 폴더에 저장해 새 탭으로 연다. */
     'result.open': { input: { title: string; question: string; key: string }; output: { ok: true } }
     /** 이슈 문구와 저장소 key의 결과로 인계 문구를 만들어 클립보드에 복사한다. */
     'result.copy': { input: { key: string; prompt: string }; output: { ok: true } }
     /** 에이전트가 실제로 동작 중인 작업 트리 id 목록. */
     'agents.active': { input: Record<string, never>; output: { active: string[] } }
-    /** 매뉴얼을 화면의 워크스페이스에서 새 탭으로 연다. */
+    /** 매뉴얼을 다운로드 폴더의 워크스페이스에서 새 탭으로 연다. */
     'manual.open': { input: Record<string, never>; output: { ok: true } }
     /** 프로젝트와 결과를 백업 폴더에 남긴다. 직전 백업과 같으면 file이 null이다. */
     'backup.auto': { input: { reason?: string }; output: { file: string | null } }
