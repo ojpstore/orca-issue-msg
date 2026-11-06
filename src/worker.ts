@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { buildBackup, findActiveWorkspaces, handoffText, isBackupFile, parseSettings, RESULT_MAX, type Project } from './logic'
 
@@ -51,6 +50,23 @@ function orcaCli(args: string[]): Promise<any> {
       }
     )
   )
+}
+
+// 편집기 탭은 워크스페이스 안의 파일만 열 수 있어서, 화면의 워크스페이스 안에 스스로를 무시하는 폴더를 두고 쓴다.
+async function openTab(name: string, content: string) {
+  const { worktrees } = await orcaCli(['worktree', 'ps', '--limit', '1000'])
+  const active = worktrees.find((w: { isActive: boolean }) => w.isActive)
+  if (!active) throw new Error('열려 있는 워크스페이스가 없습니다')
+  // .orca 아래여야 한다. 플러그인 개발 폴더가 활성 워크스페이스일 때 다른 곳에 쓰면 Orca가 리로드해서 패널 팝업이 닫힌다.
+  const dir = join(active.path, '.orca', 'issue-tabs')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, '.gitignore'), '*\n')
+  await writeFile(join(dir, name), content)
+  // orca file open은 opened: true를 돌려주지만 custom editor 탭을 만들지 않는다(1.4.250).
+  // 플러그인 키는 설치 경로에 따라 앞부분이 달라서(local., 저장소 소유자.) 목록에서 찾는다.
+  const { plugins } = await orcaCli(['plugin', 'list'])
+  const { pluginKey } = plugins.find((p: { pluginKey: string }) => p.pluginKey.endsWith('.issue-tracker'))
+  await orcaCli(['plugin', 'open', pluginKey, '--editor', join(dir, name)])
 }
 
 const IMAGE_DIR = join(homedir(), '.orca-issues', 'images')
@@ -191,31 +207,7 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('result.open', async ({ title, question, key }) => {
     const text = ((await orca.storage.get(key)) as string | null) ?? ''
-    const escape = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
-    const dir = join(homedir(), '.orca-issues', 'results')
-    await mkdir(dir, { recursive: true })
-    const file = join(dir, `${title.replace(/[^\w-]/g, '_')}.html`)
-    await writeFile(
-      file,
-      `<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${escape(title)}</title>
-<style>body{max-width:960px;margin:32px auto;padding:0 20px;font:15px/1.7 system-ui,sans-serif}h1{font-size:18px}
-pre{white-space:pre-wrap;overflow-wrap:anywhere}code{font-family:ui-monospace,Consolas,monospace;font-size:.92em}
-h2{margin:24px 0 8px;font-size:14px;opacity:.7}.q{padding:12px;background:rgb(127 127 127/15%);border-radius:6px}#out>pre:first-child{font:inherit}pre code{display:block;padding:12px;background:rgb(127 127 127/15%);border-radius:6px}
-table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 127 127/50%)}a{color:#4f8cff}</style>
-<h1>${escape(title)} 에이전트 결과</h1>
-<h2>질문</h2><pre class="q">${escape(question)}</pre>
-<h2>답변</h2><div id="out"><pre>${escape(text)}</pre></div>
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-<script>try{out.innerHTML=DOMPurify.sanitize(marked.parse(${JSON.stringify(text).replace(/</g, '\\u003c')}))}catch{}</script>`
-    )
-    const [cmd, args] =
-      process.platform === 'win32'
-        ? ['cmd', ['/c', 'start', '', file]]
-        : process.platform === 'darwin'
-          ? ['open', [file]]
-          : ['xdg-open', [file]]
-    execFile(cmd, args, { windowsHide: true }, () => {})
+    await openTab(`${title.replace(/[^\w-]/g, '_')}.issue-result`, JSON.stringify({ title, question, text }))
     return { ok: true as const }
   })
 
@@ -301,19 +293,9 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
     return { ok: true as const }
   })
 
-  // 매뉴얼(docs/manual.html, 이미지는 docs/img)을 기본 브라우저에서 연다. 파일 위치는 이 worker 파일을 기준으로 찾는다.
+  // 화면은 custom editor의 entry인 docs/manual.html이 그리므로 파일은 탭을 여는 빈 표식이면 된다.
   orca.panels.handle('manual.open', async () => {
-    const file = fileURLToPath(new URL('../docs/manual.html', import.meta.url))
-    await stat(file).catch(() => {
-      throw new Error(`매뉴얼 파일을 찾을 수 없습니다: ${file}`)
-    })
-    const [cmd, args] =
-      process.platform === 'win32'
-        ? ['cmd', ['/c', 'start', '', file]]
-        : process.platform === 'darwin'
-          ? ['open', [file]]
-          : ['xdg-open', [file]]
-    execFile(cmd, args, { windowsHide: true }, () => {})
+    await openTab('manual.issue-manual', '')
     return { ok: true as const }
   })
 

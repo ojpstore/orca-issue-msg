@@ -1835,7 +1835,7 @@ function manualButton() {
     'button',
     {
       type: 'button',
-      title: '이 플러그인의 사용 매뉴얼을 웹 브라우저로 엽니다',
+      title: '이 플러그인의 사용 매뉴얼을 새 탭으로 엽니다',
       ariaLabel: '매뉴얼',
       style: 'margin-right:auto',
       onclick: () =>
