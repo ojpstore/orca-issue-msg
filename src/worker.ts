@@ -59,7 +59,10 @@ async function openBrowserTab(file: string) {
   const { worktrees } = await orcaCli(['worktree', 'ps', '--limit', '1000'])
   const active = worktrees.find((w: { isActive: boolean }) => w.isActive)
   if (!active) throw new Error('열려 있는 워크스페이스가 없습니다')
-  await orcaCli(['tab', 'create', '--url', pathToFileURL(file).href, '--worktree', `id:${active.worktreeId}`])
+  const worktree = `id:${active.worktreeId}`
+  const { browserPageId } = await orcaCli(['tab', 'create', '--url', pathToFileURL(file).href, '--worktree', worktree])
+  // create는 브라우저 탭 안에서만 활성화하므로 터미널 등을 보고 있어도 화면에 나오도록 --focus로 전환한다.
+  await orcaCli(['tab', 'switch', '--page', browserPageId, '--worktree', worktree, '--focus'])
 }
 
 const IMAGE_DIR = join(homedir(), '.orca-issues', 'images')
