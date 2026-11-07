@@ -6,7 +6,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { buildBackup, findActiveWorkspaces, handoffText, isBackupFile, parseSettings, RESULT_MAX, type Project } from './logic'
+import { buildBackup, findActiveWorkspaces, handoffText, isBackupFile, parseBackup, parseSettings, RESULT_MAX, type Project } from './logic'
+import { readZip, writeZip } from './zip'
 
 // worker에서 그냥 'orca'를 부르면 Windows는 앱 본체(Orca.exe)를 찾아 실행한다. 함께 설치된 CLI를 지정한다.
 // 셸을 거치지 않으므로 orca.cmd처럼 프롬프트의 줄바꿈이 망가지지 않는다.
@@ -76,6 +77,16 @@ const PICK_FOLDER_PS = [
   '$d.SelectedPath=$env:ISSUES_PICK_DIR',
   '$owner=New-Object Windows.Forms.Form -Property @{TopMost=$true}',
   "if($d.ShowDialog($owner) -eq 'OK'){[Console]::Out.Write($d.SelectedPath)}"
+].join(';')
+const PICK_FILE_PS = [
+  'Add-Type -AssemblyName System.Windows.Forms',
+  '[Console]::OutputEncoding=[Text.Encoding]::UTF8',
+  '$d=New-Object Windows.Forms.OpenFileDialog',
+  "$d.Title='복구할 백업 파일 선택'",
+  "$d.Filter='백업 파일 (*.zip;*.json)|*.zip;*.json'",
+  "$d.InitialDirectory=($env:ISSUES_PICK_DIR -replace '/','\\')",
+  '$owner=New-Object Windows.Forms.Form -Property @{TopMost=$true}',
+  "if($d.ShowDialog($owner) -eq 'OK'){[Console]::Out.Write($d.FileName)}"
 ].join(';')
 const MAX_IMAGE_BYTES = 10 << 20
 const IMAGE_TYPES: Record<string, string> = {
@@ -241,8 +252,9 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
     })
   })
 
-  // 자동 백업: 저장소의 프로젝트와 결과를 설정한 백업 폴더에 남긴다. 내용이 같으면 새로 만들지 않고 설정한 개수만큼만 둔다.
-  orca.panels.handle('backup.auto', async ({ reason }) => {
+  // 백업은 zip 한 파일: issues.json(프로젝트·이슈·결과)과 이슈가 쓰는 첨부 이미지(images/)를 담는다.
+  // 내용이 같으면(force가 아닐 때) 새로 만들지 않고, 설정한 개수만큼만 둔다.
+  async function makeBackup(reason: string, force: boolean) {
     const projects = ((await orca.storage.get('projects')) as Project[] | null) ?? []
     if (projects.length === 0) return { file: null }
     const results: Record<string, string> = {}
@@ -250,23 +262,66 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
       results[k] = ((await orca.storage.get(k)) as string | null) ?? ''
     }
     const now = new Date()
-    const data = buildBackup(projects, results, now)
+    const json = buildBackup(projects, results, now)
+    const images: { name: string; data: Buffer }[] = []
+    for (const name of [...new Set(projects.flatMap((p) => p.issues.flatMap((i) => i.images ?? [])))].sort()) {
+      // 파일이 없어진 이미지는 건너뛴다. 백업 전체를 막을 일이 아니다.
+      try {
+        images.push({ name: `images/${name}`, data: await readFile(imagePath(name)) })
+      } catch {}
+    }
     const { backupKeep, backupDir } = parseSettings(await orca.storage.get('settings'))
     const dir = backupDir || DEFAULT_BACKUP_DIR
     await mkdir(dir, { recursive: true })
     const files = (await readdir(dir)).filter(isBackupFile).sort()
-    const strip = (t: string) => t.replace(/"exportedAt": "[^"]*"/, '')
-    if (files.length > 0) {
-      const last = await readFile(join(dir, files[files.length - 1]), 'utf8').catch(() => '')
-      if (strip(last) === strip(data)) return { file: null }
+    const signature = (text: string, names: string[]) => text.replace(/"exportedAt": "[^"]*"/, '') + names.join('\n')
+    const last = files[files.length - 1]
+    if (!force && last?.endsWith('.zip')) {
+      try {
+        const entries = readZip(await readFile(join(dir, last)))
+        const names = [...entries.keys()].filter((n) => n.startsWith('images/')).sort()
+        if (signature(entries.get('issues.json')!().toString('utf8'), names) === signature(json, images.map((i) => i.name))) {
+          return { file: null }
+        }
+      } catch {}
     }
     const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-')
-    const file = join(dir, `${stamp}-${reason ?? 'auto'}.json`)
-    await writeFile(file, data)
+    const file = join(dir, `${stamp}-${reason}.zip`)
+    await writeFile(file, writeZip([{ name: 'issues.json', data: Buffer.from(json) }, ...images]))
     for (const old of [...files, basename(file)].sort().slice(0, -backupKeep)) {
       await rm(join(dir, old), { force: true })
     }
     return { file }
+  }
+  orca.panels.handle('backup.auto', ({ reason, force }) => makeBackup(reason ?? 'auto', !!force))
+
+  // 백업 파일(zip, 예전 형식 json)을 열어 내용을 확인한다. 복구 전에 개수를 보여주고, 복구할 때도 쓴다.
+  async function openBackup(file: string) {
+    if (!isAbsolute(file)) throw new Error('전체 경로가 필요합니다.')
+    const buf = await readFile(file)
+    const entries = file.toLowerCase().endsWith('.zip') ? readZip(buf) : new Map([['issues.json', () => buf]])
+    const read = entries.get('issues.json')
+    if (!read) throw new Error('이 플러그인의 백업 파일이 아닙니다.')
+    const backup = parseBackup(read().toString('utf8'))
+    const images = [...entries].filter(([n]) => /^images\/[0-9a-f-]{36}\.(png|jpg|gif|webp)$/.test(n))
+    return { ...backup, images: images.map(([n, data]) => ({ name: n.slice('images/'.length), data })) }
+  }
+
+  orca.panels.handle('backup.inspect', async ({ file }) => {
+    const { projects, images } = await openBackup(file)
+    return { projects: projects.length, issues: projects.reduce((n, p) => n + p.issues.length, 0), images: images.length }
+  })
+
+  // 현재 상태를 백업해 두고 저장소의 프로젝트와 결과를 통째로 바꾼 뒤, 백업의 이미지를 이미지 폴더에 되돌린다.
+  orca.panels.handle('backup.restore', async ({ file }) => {
+    const { projects, results, images } = await openBackup(file)
+    await makeBackup('before-restore', true)
+    await mkdir(IMAGE_DIR, { recursive: true })
+    for (const { name, data } of images) await writeFile(imagePath(name), data())
+    for (const k of (await orca.storage.keys()) as string[]) if (k.startsWith('result:')) await orca.storage.delete(k)
+    for (const [k, v] of Object.entries(results)) await orca.storage.set(k, v)
+    await orca.storage.set('projects', projects)
+    return { ok: true as const }
   })
 
   orca.panels.handle('agents.active', async () => {
@@ -290,22 +345,24 @@ table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid rgb(127 1
     return { ok: true as const }
   })
 
-  // 플러그인 API에 폴더 선택이 없어서 OS 창을 띄운다. 패널 요청은 30초면 끊기므로 기다리지 않고 결과를 저장소로 넘긴다.
-  orca.panels.handle('backup.pickDir', async ({ dir }) => {
+  // 플러그인 API에 폴더·파일 선택이 없어서 OS 창을 띄운다. 패널 요청은 30초면 끊기므로 기다리지 않고 결과를 저장소로 넘긴다.
+  function pick(folder: boolean, dir: string, storageKey: string) {
     const [cmd, args] =
       process.platform === 'win32'
-        ? ['powershell', ['-NoProfile', '-STA', '-Command', PICK_FOLDER_PS]]
+        ? ['powershell', ['-NoProfile', '-STA', '-Command', folder ? PICK_FOLDER_PS : PICK_FILE_PS]]
         : process.platform === 'darwin'
-          ? ['osascript', ['-e', 'POSIX path of (choose folder)']]
-          : ['zenity', ['--file-selection', '--directory']]
+          ? ['osascript', ['-e', folder ? 'POSIX path of (choose folder)' : 'POSIX path of (choose file)']]
+          : ['zenity', folder ? ['--file-selection', '--directory'] : ['--file-selection']]
     execFile(cmd, args, { windowsHide: true, env: { ...process.env, ISSUES_PICK_DIR: dir } }, (err, stdout) => {
       // macOS와 Linux는 취소도 0이 아닌 종료 코드로 끝난다. 명령이 없을 때만 code가 문자열이다.
       const failed = err && (process.platform === 'win32' || typeof err.code === 'string')
-      const picked = { dir: failed ? '' : stdout.trim(), error: failed ? `폴더 선택 창을 열 수 없습니다: ${err.message}` : '' }
-      orca.storage.set('pickedDir', picked).catch(() => {})
+      const picked = { path: failed ? '' : stdout.trim(), error: failed ? `선택 창을 열 수 없습니다: ${err.message}` : '' }
+      orca.storage.set(storageKey, picked).catch(() => {})
     })
     return { ok: true as const }
-  })
+  }
+  orca.panels.handle('backup.pickDir', async ({ dir }) => pick(true, dir, 'pickedDir'))
+  orca.panels.handle('backup.pickFile', async ({ dir }) => pick(false, dir, 'pickedFile'))
 
   // 매뉴얼(docs/manual.html, 이미지는 docs/img)을 연다. 파일 위치는 이 worker 파일을 기준으로 찾는다.
   orca.panels.handle('manual.open', async () => {

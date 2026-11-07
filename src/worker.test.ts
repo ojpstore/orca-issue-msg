@@ -76,3 +76,35 @@ test('자동 백업은 설정한 폴더에 쓰고, 백업 이름이 아닌 파�
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('백업 zip을 확인하고 복구하면 저장소가 백업 내용으로 바뀐다', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'issues-backup-'))
+  try {
+    const stored: Record<string, unknown> = {
+      projects: [{ key: 'A', name: 'a', issues: [{ number: 1, title: 't', createdAt: 1 }] }],
+      settings: { backupDir: dir }
+    }
+    const handlers: Record<string, (input: any) => Promise<any>> = {}
+    const orca = new Proxy(
+      {
+        storage: {
+          get: async (k: string) => stored[k] ?? null,
+          set: async (k: string, v: unknown) => void (stored[k] = v),
+          delete: async (k: string) => void delete stored[k],
+          keys: async () => Object.keys(stored)
+        },
+        panels: { handle: (name: string, fn: any) => (handlers[name] = fn) }
+      } as any,
+      { get: (target, k) => target[k] ?? new Proxy(() => {}, { get: (f, p) => (p === 'then' ? undefined : f) }) }
+    )
+    activate(orca)
+    const { file } = await handlers['backup.auto']({ reason: 'manual', force: true })
+    assert.ok(file.endsWith('-manual.zip'))
+    assert.deepEqual(await handlers['backup.inspect']({ file }), { projects: 1, issues: 1, images: 0 })
+    stored.projects = []
+    await handlers['backup.restore']({ file })
+    assert.equal((stored.projects as any[])[0].key, 'A')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

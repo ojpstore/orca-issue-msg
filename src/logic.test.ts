@@ -288,6 +288,7 @@ test('설정은 없거나 잘못된 값을 기본값과 범위로 맞춘다', ()
 
 test('백업 폴더 정리는 백업 이름 형식의 파일만 대상으로 한다', () => {
   assert.ok(isBackupFile('20261104-133256-auto.json'))
+  assert.ok(isBackupFile('20261104-133256-manual.zip'))
   assert.ok(isBackupFile('20261104-133256-before-restore.json'))
   assert.ok(!isBackupFile('package.json'))
   assert.ok(!isBackupFile('20261104-notes.json'))

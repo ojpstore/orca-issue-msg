@@ -301,7 +301,7 @@ export function parseSettings(raw: any): Settings {
 
 // 백업 폴더는 사용자가 고르므로 다른 파일이 섞일 수 있다. 정리할 때 이 이름 형식만 건드린다.
 export function isBackupFile(name: string) {
-  return /^\d{8}-\d{6}-[\w-]+\.json$/.test(name)
+  return /^\d{8}-\d{6}-[\w-]+\.(json|zip)$/.test(name)
 }
 
 // 백업 파일은 결과를 이슈 안에 넣어 한 파일로 끝낸다. 예전 백업(결과가 이슈 안에 있던 형식)도 그대로 읽힌다.

@@ -30,8 +30,14 @@ declare module 'orca' {
     'agents.active': { input: Record<string, never>; output: { active: string[] } }
     /** 매뉴얼을 화면의 워크스페이스에서 브라우저 탭으로 연다. */
     'manual.open': { input: Record<string, never>; output: { ok: true } }
-    /** 프로젝트와 결과를 백업 폴더에 남긴다. 직전 백업과 같으면 file이 null이다. */
-    'backup.auto': { input: { reason?: string }; output: { file: string | null } }
+    /** 프로젝트·결과·첨부 이미지를 zip 하나로 백업 폴더에 남긴다. 직전 백업과 같으면(force가 아닐 때) file이 null이다. */
+    'backup.auto': { input: { reason?: string; force?: boolean }; output: { file: string | null } }
+    /** 백업 파일(zip 또는 예전 json)의 프로젝트·이슈·이미지 개수. 백업 파일이 아니면 오류를 던진다. */
+    'backup.inspect': { input: { file: string }; output: { projects: number; issues: number; images: number } }
+    /** 현재 상태를 백업한 뒤 백업 파일의 내용으로 저장소와 이미지 폴더를 바꾼다. */
+    'backup.restore': { input: { file: string }; output: { ok: true } }
+    /** 파일 선택 창을 띄우고 바로 끝난다. 고른 결과는 저장소의 pickedFile로 전달한다. */
+    'backup.pickFile': { input: { dir: string }; output: { ok: true } }
     /** 기본 자동 백업 폴더의 전체 경로. */
     'backup.defaultDir': { input: Record<string, never>; output: { dir: string } }
     /** 폴더를 만들고 쓸 수 있는지 확인한다. 쓸 수 없으면 오류를 던진다. */

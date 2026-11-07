@@ -3,7 +3,6 @@ import {
   AGENTS,
   appendFollowUp,
   appendRun,
-  buildBackup,
   canRun,
   cloneIssue,
   createProject,
@@ -19,7 +18,6 @@ import {
   issueId,
   issueMatches,
   issuePrompt,
-  parseBackup,
   parseSettings,
   patchIssue,
   resultKey,
@@ -1429,23 +1427,23 @@ function issueList(project: Project) {
   )
 }
 
-// 가져온 백업 파일. 사용자가 확인하기 전에는 현재 데이터를 건드리지 않는다.
-let pendingRestore: { projects: Project[]; results: Record<string, string> } | null = null
+// 고른 백업 파일. 사용자가 확인하기 전에는 현재 데이터를 건드리지 않는다.
+let pendingRestore: { file: string; projects: number; issues: number; images: number } | null = null
+let backupNotice = ''
+let pickingBackup = false
 
-// 복구 전에 현재 상태를 백업 폴더에 남기고, 결과 키까지 통째로 바꾼다.
-async function restoreBackup(data: { projects: Project[]; results: Record<string, string> }) {
+// worker가 현재 상태를 백업하고 저장소와 이미지 폴더를 바꾼다. 패널은 바뀐 저장소를 다시 읽어 온다.
+async function restoreBackup(file: string) {
   try {
-    await orca.plugin.request('backup.auto', { reason: 'before-restore' })
-    for (const k of (await orca.storage.keys()) as string[]) if (k.startsWith('result:')) await orca.storage.delete(k)
+    await orca.plugin.request('backup.restore', { file })
+    projects = (await orca.storage.get('projects')) ?? []
     results.clear()
-    for (const [k, v] of Object.entries(data.results)) {
-      await orca.storage.set(k, v)
-      results.set(k, v)
+    for (const k of (await orca.storage.keys()) as string[]) {
+      const v = k.startsWith('result:') ? await orca.storage.get(k) : null
+      if (typeof v === 'string') results.set(k, v)
     }
-    projects = data.projects
     selectedKey = projects[0]?.key ?? ''
     saveSetting('selectedKey', selectedKey)
-    saveProjects()
     saveError = ''
   } catch (e) {
     saveError = `복구 실패: ${(e as Error).message}`
@@ -1456,25 +1454,45 @@ async function restoreBackup(data: { projects: Project[]; results: Record<string
   render()
 }
 
+// 파일 선택 창은 worker가 띄우고, 고른 결과는 저장소로 돌아온다.
 function importBackup() {
-  const input = el('input', { type: 'file', accept: '.json,application/json' }) as HTMLInputElement
-  input.onchange = async () => {
-    const file = input.files?.[0]
-    if (!file) return
+  if (pickingBackup) return
+  pickingBackup = true
+  backupNotice = ''
+  render()
+  // 기본 경로는 설정 창을 열어야 채워지므로, 비어 있으면 worker에서 가져온다.
+  Promise.resolve(settings.backupDir || defaultBackupDir || orca.plugin.request('backup.defaultDir', {}).then((r: { dir: string }) => r.dir))
+    .then((dir) => orca.plugin.request('backup.pickFile', { dir }))
+    .catch((e: Error) => {
+      pickingBackup = false
+      saveError = `가져오기 실패: ${e.message}`
+      render()
+    })
+}
+
+async function applyPickedFile() {
+  const picked: { path: string; error: string } | null = await orca.storage.get('pickedFile')
+  if (!picked) return
+  await orca.storage.delete('pickedFile')
+  pickingBackup = false
+  saveError = picked.error
+  pendingRestore = null
+  if (picked.path) {
     try {
-      pendingRestore = parseBackup(await file.text())
-      saveError = ''
+      pendingRestore = { file: picked.path, ...(await orca.plugin.request('backup.inspect', { file: picked.path })) }
     } catch (e) {
-      pendingRestore = null
       saveError = `가져오기 실패: ${(e as Error).message}`
     }
-    render()
   }
-  input.click()
+  render()
 }
 
 function banners() {
-  const error = saveError ? el('div', { className: 'error' }, saveError) : null
+  const error = saveError
+    ? el('div', { className: 'error' }, saveError)
+    : backupNotice
+      ? el('div', { className: 'muted' }, backupNotice)
+      : null
   if (bulkDeleteAsk && selected.size > 0) {
     const project = currentProject()
     return el(
@@ -1506,12 +1524,11 @@ function banners() {
     )
   }
   if (!pendingRestore) return error
-  const issues = pendingRestore.projects.reduce((n, p) => n + p.issues.length, 0)
   return el(
     'div',
     { className: 'stack' },
     error,
-    el('div', {}, `백업에서 프로젝트 ${pendingRestore.projects.length}개, 이슈 ${issues}개를 복구합니다. 현재 데이터는 모두 대체되며, 복구 직전 상태는 백업 폴더(${settings.backupDir || '~/.orca-issues/backups'})에 남깁니다.`),
+    el('div', {}, `백업 파일에서 프로젝트 ${pendingRestore.projects}개, 이슈 ${pendingRestore.issues}개, 이미지 ${pendingRestore.images}개를 복구합니다. 현재 데이터는 모두 대체되며, 복구 직전 상태는 백업 폴더(${settings.backupDir || '~/.orca-issues/backups'})에 남깁니다.`),
     el(
       'div',
       { className: 'row' },
@@ -1520,7 +1537,7 @@ function banners() {
         {
           type: 'button',
           className: 'primary',
-          onclick: () => restoreBackup(pendingRestore!)
+          onclick: () => restoreBackup(pendingRestore!.file)
         },
         '복구 확인'
       ),
@@ -1630,25 +1647,22 @@ const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
   },
   {
     label: '⬇ 백업',
-    title: '프로젝트와 이슈 데이터를 JSON 파일로 저장',
-    // ponytail: 이미지 첨부 파일은 포함하지 않는다(이슈에는 파일명만 저장돼 있다). 필요하면 worker에서 묶어 보낸다.
+    title: '프로젝트·이슈·첨부 이미지를 zip 하나로 백업 폴더에 저장',
     onclick: () => {
-      const d = new Date()
-      const pad = (n: number) => String(n).padStart(2, '0')
-      const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
-      orca.files
-        .saveAs({
-          suggestedName: `issues-backup-${stamp}.json`,
-          mimeType: 'application/json',
-          data: buildBackup(projects, Object.fromEntries(results), d)
+      saveError = ''
+      orca.plugin
+        .request('backup.auto', { reason: 'manual', force: true })
+        .then(({ file }: { file: string | null }) => {
+          backupNotice = file ? `백업했습니다: ${file}` : '백업할 프로젝트가 없습니다.'
+          setTimeout(() => ((backupNotice = ''), render()), 10_000)
         })
         .catch((e: Error) => {
           saveError = `백업 실패: ${e.message}`
-          render()
         })
+        .finally(render)
     }
   },
-  { label: '⬆ 임포트', title: '백업 JSON 파일에서 프로젝트와 이슈 복구', onclick: importBackup }
+  { label: '⬆ 임포트', title: '백업 zip 파일에서 프로젝트, 이슈, 이미지 복구', onclick: importBackup }
 ]
 
 // 선택 모드의 하단바: 전체 선택, 상태 변경, 삭제, 종료.
@@ -1730,11 +1744,11 @@ function pickBackupDir() {
 
 // worker가 폴더 선택 창의 결과를 남기면 사본에만 넣는다. 저장은 여전히 저장 버튼이 한다.
 async function applyPickedDir() {
-  const picked: { dir: string; error: string } | null = await orca.storage.get('pickedDir')
+  const picked: { path: string; error: string } | null = await orca.storage.get('pickedDir')
   if (!picked) return
   await orca.storage.delete('pickedDir')
   pickingDir = false
-  if (picked.dir) settingsDraft.backupDir = picked.dir
+  if (picked.path) settingsDraft.backupDir = picked.path
   settingsError = picked.error
   if (settingsDialog.open) renderSettingsDialog()
 }
@@ -2244,6 +2258,7 @@ async function boot() {
     orca.storage.onDidChange(() => {
       applyCompleted().catch(() => {})
       applyPickedDir().catch(() => {})
+      applyPickedFile().catch(() => {})
     })
     applyCompleted().catch(() => {})
     refreshActive().catch(() => {})
