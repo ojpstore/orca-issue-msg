@@ -558,10 +558,13 @@ function clearIssueDraft() {
   issueDraft.images = []
   issueDraft.nextImage = 1
   issueDraft.mode = 'existing'
+  issueDraft.repoId = ''
+  issueDraft.agent = AGENTS[0].value
+  issueDraft.worktreeId = ''
   imageError = ''
 }
 
-// ✕와 Esc는 작성 중인 내용을 남긴다. 실수로 닫아도 잃지 않도록, 지우는 건 취소뿐이다.
+// 새 이슈 버튼을 누를 때마다 초기화한다.
 async function loadIssueRepos(project: Project) {
   issueRepos = null
   issueTrees = null
@@ -899,7 +902,28 @@ function titleView(issue: Issue) {
 
 function titleEditor(issue: Issue, update: (patch: Partial<Issue>) => void, redraw: () => void = renderDetail) {
   const input = el('input', { value: issue.title, ariaLabel: '이슈 제목' }) as HTMLInputElement
-  const desc = el('textarea', { value: issue.description ?? '', rows: 5, ariaLabel: '이슈 설명' }) as HTMLTextAreaElement
+  // 등록 팝업과 같은 붙여넣기 로직을 쓰려고 초안 상태를 이 이슈로 채운다. (저장된 images[i] ↔ [Image #i+1])
+  const current = issue.images ?? []
+  issueDraft.description = issue.description ?? ''
+  issueDraft.images = current.map((name, i) => ({ n: i + 1, name }))
+  issueDraft.nextImage = current.length + 1
+  imageError = ''
+  uploading = 0
+  const desc = el('textarea', {
+    value: issueDraft.description,
+    rows: 5,
+    maxLength: 8000,
+    ariaLabel: '이슈 설명',
+    placeholder: '이미지를 붙여넣을 수 있습니다',
+    onpaste: pasteImages,
+    oninput: (e: any) => {
+      issueDraft.description = e.target.value
+      syncDraftImages()
+    }
+  }) as HTMLTextAreaElement
+  draftDescription = desc
+  draftImages = el('div', { className: 'thumbs' })
+  renderDraftImages()
   const close = () => {
     editingTitle = false
     redraw()
@@ -907,8 +931,9 @@ function titleEditor(issue: Issue, update: (patch: Partial<Issue>) => void, redr
   const save = () => {
     const title = input.value.trim()
     if (!title) return input.focus()
+    if (uploading) return // 이미지 저장이 끝나야 이름이 정해진다
     editingTitle = false
-    update({ title, description: desc.value.trim() })
+    update({ title, ...finalizeImages(issueDraft.description.trim(), issueDraft.images) })
   }
   input.onkeydown = (e: KeyboardEvent) => {
     if (e.key === 'Enter') save()
@@ -929,6 +954,7 @@ function titleEditor(issue: Issue, update: (patch: Partial<Issue>) => void, redr
     { className: 'stack' },
     input,
     desc,
+    draftImages,
     el(
       'div',
       { className: 'row' },
@@ -1125,7 +1151,7 @@ function renderDetail() {
       el(
         'div',
         { className: 'images' },
-        ...(issue.images ?? []).map((name, i) =>
+        ...(editingTitle ? [] : issue.images ?? []).map((name, i) =>
           el('figure', {}, imageTag(name), el('span', { className: 'muted' }, imageToken(i + 1)))
         )
       ),
@@ -1576,6 +1602,7 @@ function view() {
           type: 'button',
           className: 'primary',
           onclick: () => {
+            clearIssueDraft()
             renderIssueDialog(project)
             issueDialog.showModal()
             loadIssueRepos(project)
@@ -2040,7 +2067,7 @@ function renderRunConfirm(current: Run) {
       el(
         'div',
         { className: 'images' },
-        ...(issue.images ?? []).map((name, i) =>
+        ...(editingTitle ? [] : issue.images ?? []).map((name, i) =>
           el('figure', {}, imageTag(name), el('span', { className: 'muted' }, imageToken(i + 1)))
         )
       ),
