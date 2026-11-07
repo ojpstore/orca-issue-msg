@@ -876,7 +876,6 @@ function detailActions(project: Project, issue: Issue) {
 
 function titleView(issue: Issue) {
   const title = el('div', { className: 'description detail-title grow' }, issue.title)
-  if (issue.status !== 'done') return title
   return el(
     'div',
     { className: 'row' },
@@ -886,8 +885,8 @@ function titleView(issue: Issue) {
       {
         type: 'button',
         className: 'ghost',
-        title: '제목 수정',
-        ariaLabel: '제목 수정',
+        title: '제목·설명 수정',
+        ariaLabel: '제목·설명 수정',
         onclick: () => {
           editingTitle = true
           renderDetail()
@@ -898,17 +897,18 @@ function titleView(issue: Issue) {
   )
 }
 
-function titleEditor(current: string, update: (patch: Partial<Issue>) => void) {
-  const input = el('input', { value: current, ariaLabel: '이슈 제목' }) as HTMLInputElement
+function titleEditor(issue: Issue, update: (patch: Partial<Issue>) => void, redraw: () => void = renderDetail) {
+  const input = el('input', { value: issue.title, ariaLabel: '이슈 제목' }) as HTMLInputElement
+  const desc = el('textarea', { value: issue.description ?? '', rows: 5, ariaLabel: '이슈 설명' }) as HTMLTextAreaElement
   const close = () => {
     editingTitle = false
-    renderDetail()
+    redraw()
   }
   const save = () => {
     const title = input.value.trim()
     if (!title) return input.focus()
     editingTitle = false
-    update({ title })
+    update({ title, description: desc.value.trim() })
   }
   input.onkeydown = (e: KeyboardEvent) => {
     if (e.key === 'Enter') save()
@@ -917,13 +917,24 @@ function titleEditor(current: string, update: (patch: Partial<Issue>) => void) {
       close()
     }
   }
+  desc.onkeydown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      close()
+    }
+  }
   setTimeout(() => input.select())
   return el(
     'div',
-    { className: 'row' },
-    el('div', { className: 'grow' }, input),
-    el('button', { type: 'button', className: 'primary', onclick: save }, '저장'),
-    el('button', { type: 'button', className: 'ghost', onclick: close }, '취소')
+    { className: 'stack' },
+    input,
+    desc,
+    el(
+      'div',
+      { className: 'row' },
+      el('button', { type: 'button', className: 'primary', onclick: save }, '저장'),
+      el('button', { type: 'button', className: 'ghost', onclick: close }, '취소')
+    )
   )
 }
 
@@ -1109,8 +1120,8 @@ function renderDetail() {
           '✕'
         )
       ),
-      editingTitle && issue.status === 'done' ? titleEditor(issue.title, update) : titleView(issue),
-      issue.description ? el('div', { className: 'description' }, issue.description) : null,
+      editingTitle ? titleEditor(issue, update) : titleView(issue),
+      !editingTitle && issue.description ? el('div', { className: 'description' }, issue.description) : null,
       el(
         'div',
         { className: 'images' },
@@ -1893,6 +1904,7 @@ async function openRun(project: Project, issue: Issue) {
     error: ''
   }
   run = current
+  editingTitle = false
   if (issue.agent) lastAgent = issue.agent
   renderRun()
   dialog.showModal()
@@ -1993,8 +2005,38 @@ function renderRunConfirm(current: Run) {
         el('span', { className: 'issue-id' }, issueId(project, issue)),
         el('button', { type: 'button', className: 'ghost icon', ariaLabel: '닫기', onclick: closeRun }, '✕')
       ),
-      el('div', { className: 'confirm-title' }, issue.title),
-      issue.description ? el('div', { className: 'description confirm-body' }, issue.description) : null,
+      editingTitle
+        ? titleEditor(
+            issue,
+            (patch) => {
+              projects = patchIssue(projects, project.key, issue.number, patch)
+              saveProjects()
+              render()
+              current.issue = { ...issue, ...patch }
+              renderRun()
+            },
+            renderRun
+          )
+        : el(
+            'div',
+            { className: 'row' },
+            el('div', { className: 'confirm-title grow' }, issue.title),
+            el(
+              'button',
+              {
+                type: 'button',
+                className: 'ghost',
+                title: '제목·설명 수정',
+                ariaLabel: '제목·설명 수정',
+                onclick: () => {
+                  editingTitle = true
+                  renderRun()
+                }
+              },
+              '수정'
+            )
+          ),
+      !editingTitle && issue.description ? el('div', { className: 'description confirm-body' }, issue.description) : null,
       el(
         'div',
         { className: 'images' },
