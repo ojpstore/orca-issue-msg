@@ -137,6 +137,47 @@ function el(tag: string, props: Record<string, any> = {}, ...children: any[]): a
   return node
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const ICON_PATHS: Record<string, string[]> = {
+  folder: ['M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
+  edit: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  issue: ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6', 'M8 13h8', 'M8 17h5'],
+  todo: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M9 12h6', 'M12 9v6'],
+  in_progress: ['M12 2v4', 'M12 18v4', 'M4.93 4.93l2.83 2.83', 'M16.24 16.24l2.83 2.83', 'M2 12h4', 'M18 12h4', 'M4.93 19.07l2.83-2.83', 'M16.24 7.76l2.83-2.83'],
+  done: ['M22 11.08V12a10 10 0 1 1-5.93-9.14', 'M22 4L12 14.01l-3-3'],
+  play: ['M6 4l14 8-14 8z'],
+  search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'M21 21l-4.35-4.35'],
+  settings: [
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+    'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'
+  ],
+  book: ['M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z', 'M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'],
+  checkSquare: ['M9 11l3 3L22 4', 'M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'],
+  download: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M7 10l5 5 5-5', 'M12 15V3'],
+  upload: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M17 8l-5-5-5 5', 'M12 3v12']
+}
+
+function svgIcon(name: keyof typeof ICON_PATHS, size = 14) {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '1.8')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.classList.add('svg-ico')
+  for (const d of ICON_PATHS[name]) {
+    const path = document.createElementNS(SVG_NS, 'path')
+    path.setAttribute('d', d)
+    svg.appendChild(path)
+  }
+  return svg
+}
+
 function field(label: string, control: HTMLElement) {
   return el('label', {}, label, control)
 }
@@ -759,7 +800,7 @@ function issueRow(project: Project, issue: Issue) {
   }
   return el(
     'div',
-    { className: 'row issue-card' },
+    { className: `row issue-card status-${issue.status}` },
     el(
       'button',
       {
@@ -770,7 +811,7 @@ function issueRow(project: Project, issue: Issue) {
         onclick: () => openDetail(project.key, issue.number)
       },
       el('span', { className: 'issue-id' }, id),
-      el('span', { className: 'issue-title' }, issue.title),
+      el('span', { className: 'issue-title' }, issue.title)
     ),
     canRun(issue, stuckNow(issue))
       ? el(
@@ -782,9 +823,9 @@ function issueRow(project: Project, issue: Issue) {
             ariaLabel: `${id} 실행`,
             onclick: () => openRun(project, issue)
           },
-          '▶'
+          svgIcon('play', 11)
         )
-      : null
+      : el('span', { className: 'status-dot', ariaHidden: 'true' })
   )
 }
 
@@ -955,7 +996,7 @@ function titleEditor(issue: Issue, update: (patch: Partial<Issue>) => void, redr
     draftImages,
     el(
       'div',
-      { className: 'row' },
+      { className: 'row inline-actions' },
       el('button', { type: 'button', className: 'primary', onclick: save }, '저장'),
       el('button', { type: 'button', className: 'ghost', onclick: close }, '취소')
     )
@@ -1348,7 +1389,7 @@ function issueSearch(project: Project, box: HTMLElement) {
   const input = el('input', {
     type: 'search',
     value: issueQuery,
-    placeholder: '이슈 검색',
+    placeholder: '이슈 필터 (번호·제목·내용·결과)',
     ariaLabel: '이슈 검색'
   }) as HTMLInputElement
   // 전체를 다시 그리면 입력란 포커스를 잃어서 목록만 바꾼다.
@@ -1359,8 +1400,8 @@ function issueSearch(project: Project, box: HTMLElement) {
   const scope = el(
     'select',
     {
+      className: 'search-scope',
       ariaLabel: '검색 조건',
-      style: 'width:auto;flex:none',
       onchange: () => {
         issueSearchField = scope.value
         box.replaceChildren(issueList(project))
@@ -1369,7 +1410,7 @@ function issueSearch(project: Project, box: HTMLElement) {
     ...SEARCH_FIELDS.map((f) => el('option', { value: f.value }, f.label))
   ) as HTMLSelectElement
   scope.value = issueSearchField
-  return el('div', { className: 'row' }, scope, el('div', { className: 'grow' }, input))
+  return el('div', { className: 'search-box' }, svgIcon('search', 14), input, scope)
 }
 
 function issueList(project: Project) {
@@ -1401,6 +1442,7 @@ function issueList(project: Project) {
         el(
           'summary',
           { className: `row group-header status-${group.status}` },
+          el('span', { className: 'status-icon', ariaHidden: 'true' }, svgIcon(group.status in ICON_PATHS ? (group.status as keyof typeof ICON_PATHS) : 'folder', 13)),
           el('h3', {}, group.label),
           el('span', { className: 'badge' }, String(group.issues.length)),
           group.issues.some((i) => i.status === 'todo')
@@ -1417,9 +1459,10 @@ function issueList(project: Project) {
                     openBatch(project)
                   }
                 },
-                '▶ 전체 실행'
+                svgIcon('play', 10),
+                el('span', {}, '전체 실행')
               )
-            : null
+            : el('span', { className: 'status-dot', style: 'margin-left:auto', ariaHidden: 'true' })
         ),
         el('div', { className: 'group-body' }, ...group.issues.map((issue) => issueRow(project, issue)))
       )
@@ -1491,13 +1534,13 @@ function banners() {
   const error = saveError
     ? el('div', { className: 'error' }, saveError)
     : backupNotice
-      ? el('div', { className: 'muted' }, backupNotice)
+      ? el('div', { className: 'notice' }, backupNotice)
       : null
   if (bulkDeleteAsk && selected.size > 0) {
     const project = currentProject()
     return el(
       'div',
-      { className: 'stack' },
+      { className: 'stack banner' },
       error,
       el('div', {}, `선택한 이슈 ${selected.size}개를 삭제합니다. 되돌릴 수 없습니다.`),
       el(
@@ -1526,7 +1569,7 @@ function banners() {
   if (!pendingRestore) return error
   return el(
     'div',
-    { className: 'stack' },
+    { className: 'stack banner' },
     error,
     el('div', {}, `백업 파일에서 프로젝트 ${pendingRestore.projects}개, 이슈 ${pendingRestore.issues}개, 이미지 ${pendingRestore.images}개를 복구합니다. 현재 데이터는 모두 대체되며, 복구 직전 상태는 백업 폴더(${settings.backupDir || '~/.orca-issues/backups'})에 남깁니다.`),
     el(
@@ -1570,36 +1613,13 @@ function view() {
   }
   const project = projects.find((p) => p.key === selectedKey) ?? projects[0]
   const listBox = el('div', { className: 'issue-scroll' }, issueList(project))
-  return el(
-    'div',
-    { className: 'stack issue-view' },
-    banner,
-    el(
-      'div',
-      { className: 'row between' },
-      el('h2', {}, '📁 프로젝트'),
-      el(
-        'div',
-        { className: 'row' },
-        el(
-          'button',
-          {
-            type: 'button',
-            className: 'ghost',
-            title: '프로젝트 수정',
-            ariaLabel: '프로젝트 수정',
-            onclick: () => openProjectDialog(project)
-          },
-          '수정'
-        ),
-        el('button', { type: 'button', onclick: () => openProjectDialog(null) }, '+ 새 프로젝트')
-      )
-    ),
-    select(
-      '',
-      projects.map((p) => ({ value: p.key, label: `${p.name} (${p.key})` })),
-      project.key,
-      (key) => {
+  const projectSelect = el(
+    'select',
+    {
+      className: 'project-select',
+      ariaLabel: '프로젝트 선택',
+      onchange: (e: any) => {
+        const key = e.target.value
         selectedKey = key
         issueQuery = ''
         exitSelectMode()
@@ -1607,17 +1627,56 @@ function view() {
         app.querySelectorAll('.issue-groups > details').forEach((d) => (d.scrollTop = 0))
         render()
       }
-    ),
-    el('hr'),
+    },
+    ...projects.map((p) => el('option', { value: p.key }, `${p.name} (${p.key})`))
+  ) as HTMLSelectElement
+  projectSelect.value = project.key
+  return el(
+    'div',
+    { className: 'stack issue-view' },
+    banner,
     el(
       'div',
-      { className: 'row between' },
-      el('h2', {}, '📋 이슈'),
+      { className: 'row top-bar' },
+      el('div', { className: 'grow' }, projectSelect),
       el(
         'button',
         {
           type: 'button',
-          className: 'primary',
+          className: 'ghost icon',
+          title: '프로젝트 수정',
+          ariaLabel: '프로젝트 수정',
+          onclick: () => openProjectDialog(project)
+        },
+        svgIcon('edit', 14)
+      ),
+      el(
+        'button',
+        {
+          type: 'button',
+          className: 'ghost icon',
+          title: '새 프로젝트',
+          ariaLabel: '새 프로젝트',
+          onclick: () => openProjectDialog(null)
+        },
+        svgIcon('plus', 15)
+      )
+    ),
+    el(
+      'div',
+      { className: 'row between section-bar' },
+      el(
+        'div',
+        { className: 'section-pill' },
+        svgIcon('issue', 13),
+        el('span', {}, 'ISSUES'),
+        el('span', { className: 'pill-count' }, String(project.issues.length))
+      ),
+      el(
+        'button',
+        {
+          type: 'button',
+          className: 'primary new-issue-btn',
           onclick: () => {
             clearIssueDraft()
             renderIssueDialog(project)
@@ -1625,7 +1684,8 @@ function view() {
             loadIssueRepos(project)
           }
         },
-        '+ 새 이슈'
+        svgIcon('plus', 13),
+        el('span', {}, '새 이슈')
       )
     ),
     project.issues.length > 0 ? issueSearch(project, listBox) : null,
@@ -1633,10 +1693,11 @@ function view() {
   )
 }
 
-// 하단 버튼바에 들어갈 버튼. 기능을 추가할 때 여기에 { label, title, onclick }를 넣는다.
-const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
+// 하단 버튼바에 들어갈 버튼. 기능을 추가할 때 여기에 { icon, label, title, onclick }를 넣는다.
+const BAR_ACTIONS: { icon: keyof typeof ICON_PATHS; label: string; title: string; onclick: () => void }[] = [
   {
-    label: '☑ 선택',
+    icon: 'checkSquare',
+    label: '선택',
     title: '이슈를 여러 개 골라 삭제하거나 상태를 바꿉니다',
     onclick: () => {
       if (projects.length === 0) return
@@ -1646,7 +1707,8 @@ const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
     }
   },
   {
-    label: '⬇ 백업',
+    icon: 'download',
+    label: '백업',
     title: '프로젝트·이슈·첨부 이미지를 zip 하나로 백업 폴더에 저장',
     onclick: () => {
       saveError = ''
@@ -1662,7 +1724,7 @@ const BAR_ACTIONS: { label: string; title: string; onclick: () => void }[] = [
         .finally(render)
     }
   },
-  { label: '⬆ 임포트', title: '백업 zip 파일에서 프로젝트, 이슈, 이미지 복구', onclick: importBackup }
+  { icon: 'upload', label: '임포트', title: '백업 zip 파일에서 프로젝트, 이슈, 이미지 복구', onclick: importBackup }
 ]
 
 // 선택 모드의 하단바: 전체 선택, 상태 변경, 삭제, 종료.
@@ -1709,12 +1771,6 @@ function selectBarItems() {
     ),
     el('button', { type: 'button', className: 'ghost', onclick: () => (exitSelectMode(), render()) }, '완료')
   ]
-}
-
-// '아이콘 글자' 형태의 라벨을 아이콘과 글자로 나눈다. 좁은 패널에서는 글자를 숨기고 아이콘만 보인다.
-function barLabel(label: string) {
-  const [icon, ...rest] = label.split(' ')
-  return [el('span', { className: 'ico' }, icon), el('span', { className: 'lbl' }, rest.join(' '))]
 }
 
 async function openSettings() {
@@ -1873,11 +1929,12 @@ function settingsButton() {
     'button',
     {
       type: 'button',
+      className: 'ghost icon',
       title: '설정',
       ariaLabel: '설정',
       onclick: openSettings
     },
-    el('span', { className: 'ico' }, '⚙️')
+    svgIcon('settings', 14)
   )
 }
 
@@ -1887,6 +1944,7 @@ function manualButton() {
     'button',
     {
       type: 'button',
+      className: 'ghost',
       title: '이 플러그인의 사용 매뉴얼을 새 탭으로 엽니다',
       ariaLabel: '매뉴얼',
       style: 'margin-right:auto',
@@ -1896,7 +1954,8 @@ function manualButton() {
           render()
         })
     },
-    ...barLabel('📖 매뉴얼')
+    svgIcon('book', 14),
+    el('span', { className: 'lbl' }, '매뉴얼')
   )
 }
 
@@ -1904,7 +1963,18 @@ function render() {
   document.getElementById('bar')!.replaceChildren(
     ...(selectMode && projects.length > 0
       ? selectBarItems()
-      : [settingsButton(), manualButton(), ...BAR_ACTIONS.map((a) => el('button', { type: 'button', title: a.title, ariaLabel: a.label.split(' ').slice(1).join(' '), onclick: a.onclick }, ...barLabel(a.label)))])
+      : [
+          settingsButton(),
+          manualButton(),
+          ...BAR_ACTIONS.map((a) =>
+            el(
+              'button',
+              { type: 'button', className: 'ghost', title: a.title, ariaLabel: a.label, onclick: a.onclick },
+              svgIcon(a.icon, 14),
+              el('span', { className: 'lbl' }, a.label)
+            )
+          )
+        ])
   )
   // 목록을 새로 만들어도 그룹마다 보던 위치를 유지한다.
   const tops = [...app.querySelectorAll('.issue-groups > details')].map((d) => d.scrollTop)
